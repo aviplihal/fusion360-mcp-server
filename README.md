@@ -182,6 +182,7 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 | `scale_body` | Scale uniformly or non-uniformly |
 | `suppress_feature` | Suppress a timeline feature |
 | `unsuppress_feature` | Re-enable a suppressed feature |
+| `get_timeline` | Timeline items with type, suppressed, health and warning/error messages; errors_only filter |
 
 ### Body Operations
 | Tool | Description |
@@ -240,6 +241,7 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 | `join_on_holes` | Bolt two parts hole-to-hole on the correct side, checked for interference |
 | `list_joints` | List joints with type, value, limits and health |
 | `get_bom` | Bill of materials with mass and motor/servo counts |
+| `set_joint_value` | Drive a joint (deg / cm) and set its limits; temporary by default, persist=true writes angle/offset |
 
 ### Inspection & Analysis
 | Tool | Description |

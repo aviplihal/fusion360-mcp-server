@@ -24,8 +24,10 @@ from . import assembly_math as _asm
 from . import get_logger
 from . import hints as _hints
 from . import hole_geometry as _hole_geom
+from . import joint_values as _joint_vals
 from . import occurrence_refs as _occ_refs
 from . import parameter_units as _param_units
+from . import timeline_rows as _tl_rows
 
 log = get_logger("handler")
 
@@ -95,6 +97,7 @@ class CommandHandler:
             # assembly placement
             "insert_part",
             "move_occurrence",
+            "set_joint_value",
             # surface / sheet metal (can produce / thicken bodies)
             "thicken_surface",
             "patch_surface",
@@ -198,6 +201,8 @@ class CommandHandler:
                 "join_on_holes": self.join_on_holes,
                 "list_joints": self.list_joints,
                 "get_bom": self.get_bom,
+                "set_joint_value": self.set_joint_value,
+                "get_timeline": self.get_timeline,
                 # inspection / analysis
                 "measure_distance": self.measure_distance,
                 "measure_angle": self.measure_angle,
@@ -3024,6 +3029,176 @@ class CommandHandler:
         occ = self._occurrence(occurrence)
         occ.isGrounded = bool(grounded)
         return {**self._occ_info(occ), "grounded": occ.isGrounded}
+
+    def _joint_by_name(self, name: str):
+        """Joint or as-built joint anywhere in the design, by name."""
+        root = self._root()
+        joints = list(root.allJoints) + list(root.allAsBuiltJoints)
+        found = [j for j in joints if j.name == name]
+        if not found:  # "revolute1" finds Fusion's "Revolute 1"
+            key = name.replace(" ", "").lower()
+            found = [j for j in joints if j.name.replace(" ", "").lower() == key]
+        if len(found) == 1:
+            return found[0]
+        if found:
+            raise RuntimeError(
+                f"{len(found)} joints are named '{name}' (in different "
+                "components) — rename one"
+            )
+        names = [j.name for j in joints]
+        listed = ", ".join(names[:8]) + (", …" if len(names) > 8 else "")
+        raise RuntimeError(f"Joint '{name}' not found. Joints: {listed or 'none'}")
+
+    @staticmethod
+    def _dof_axis(motion, prefix: str):
+        """JointDirections value a degree of freedom moves along/about."""
+        if prefix == "slide" and hasattr(motion, "slideDirection"):
+            return motion.slideDirection
+        return motion.rotationAxis  # cylindrical slides along its rotation axis
+
+    def set_joint_value(
+        self,
+        joint: str,
+        value: float = None,
+        value2: float = None,
+        limits: dict = None,
+        limits2: dict = None,
+        persist: bool = False,
+    ):
+        """Drive a joint: rotation in degrees, slide in cm.
+
+        Temporary (default): the joint's motion value, like dragging it.
+        Fusion resets it to 0 on the next recompute (any modeling call).
+        persist=True writes the joint's angle/offset parameters instead,
+        which survive recompute; motion values and limits then count from
+        that new zero.
+        """
+        j = self._joint_by_name(joint)
+        m = j.jointMotion
+        jtype = _joint_vals.joint_type_name(m.jointType)
+        steps = _joint_vals.plan(jtype, value, value2, limits, limits2)
+        z_axis = adsk.fusion.JointDirections.ZAxisJointDirection
+        is_as_built = j.objectType == adsk.fusion.AsBuiltJoint.classType()
+
+        # Limits first: editing a limit resets the motion value to 0.
+        for prefix, unit, _, lim in steps:
+            if lim is None:
+                continue
+            jl = getattr(m, prefix + "Limits")
+            for stem, enabled, v in _joint_vals.limit_updates(lim, unit):
+                setattr(jl, f"is{stem}ValueEnabled", enabled)
+                if enabled:
+                    setattr(jl, f"{stem[0].lower()}{stem[1:]}Value", v)
+
+        warnings = []
+        for prefix, unit, v, _ in steps:
+            if v is None:
+                continue
+            if persist:
+                if is_as_built:
+                    raise RuntimeError(
+                        "As-built joints have no angle/offset to persist — "
+                        "use persist=false, or rebuild it with add_joint"
+                    )
+                if self._dof_axis(m, prefix) != z_axis:
+                    raise RuntimeError(
+                        f"Can't persist the {prefix} of '{j.name}': it isn't "
+                        "along the joint's Z axis — use persist=false"
+                    )
+                param = j.angle if prefix == "rotation" else j.offset
+                param.value = _joint_vals.to_api(v, unit)
+                setattr(m, prefix + "Value", 0.0)
+            else:
+                setattr(m, prefix + "Value", _joint_vals.to_api(v, unit))
+                got = _joint_vals.from_api(getattr(m, prefix + "Value"), unit)
+                if abs(got - v) > 1e-3:
+                    warnings.append(
+                        f"{prefix} {v} {unit} rejected (outside limits?); "
+                        f"it stays at {got} {unit}"
+                    )
+
+        # Report every degree of freedom: motion value, plus the persistent
+        # angle/offset when it acts along the same axis.
+        values, limits_out = {}, {}
+        for prefix, unit in _joint_vals.DOFS[jtype]:
+            motion_v = getattr(m, prefix + "Value")
+            base = 0.0
+            if not is_as_built and self._dof_axis(m, prefix) == z_axis:
+                param = j.angle if prefix == "rotation" else j.offset
+                base = param.value if param is not None else 0.0
+            values[f"{prefix}_{unit}"] = _joint_vals.from_api(base + motion_v, unit)
+            jl = getattr(m, prefix + "Limits")
+            lim = _joint_vals.limits_dict(
+                {
+                    "min": jl.isMinimumValueEnabled,
+                    "max": jl.isMaximumValueEnabled,
+                    "rest": jl.isRestValueEnabled,
+                },
+                {
+                    "min": jl.minimumValue,
+                    "max": jl.maximumValue,
+                    "rest": jl.restValue,
+                },
+                unit,
+            )
+            if lim:
+                limits_out[prefix] = lim
+
+        occ1 = j.occurrenceOne
+        box = self._bbox_union(self._all_bodies(occ1)) if occ1 else None
+        result = {
+            "joint": j.name,
+            "type": jtype,
+            "occurrence_one": occ1.fullPathName if occ1 else None,
+            "occurrence_two": j.occurrenceTwo.fullPathName if j.occurrenceTwo else None,
+            "values": values,
+            "persisted": bool(persist),
+            **self._joint_health(j),
+            "moved_bbox": {"min": box[0], "max": box[1]} if box else None,
+        }
+        if limits_out:
+            result["limits"] = limits_out
+        if warnings:
+            result["warnings"] = warnings
+        return result
+
+    def get_timeline(self, offset: int = 0, limit: int = 100, errors_only=False):
+        """Compact timeline rows; collapsed groups are one row."""
+        tl = self._design().timeline
+
+        def raw(t, i):
+            ent = t.entity
+            return _tl_rows.row(
+                i,
+                t.name,
+                ent.objectType if ent is not None else None,
+                t.isSuppressed,
+                t.healthState,
+                t.errorOrWarningMessage if t.healthState in (1, 2) else None,
+            )
+
+        rows = []
+        for i in range(tl.count):
+            t = tl.item(i)
+            if t.isGroup:
+                g = adsk.fusion.TimelineGroup.cast(t)
+                kids = []
+                for k in range(g.count):
+                    kid = raw(g.item(k), i)
+                    kid["k"] = k
+                    kids.append(kid)
+                rows.append(_tl_rows.group_row(i, t.name, t.isSuppressed, kids))
+            else:
+                rows.append(raw(t, i))
+
+        selected, matching = _tl_rows.page(rows, offset, limit, errors_only)
+        return {
+            "count": tl.count,
+            "marker_position": tl.markerPosition,
+            "problems": sum(1 for r in rows if _tl_rows.is_problem(r)),
+            "items": selected,
+            "truncated": offset + len(selected) < matching,
+        }
 
     @staticmethod
     def _placement(translation=None, axis=None, angle: float = 0):

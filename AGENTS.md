@@ -66,6 +66,7 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 | `scale_body` | Scale uniformly or non-uniformly |
 | `suppress_feature` | Suppress a timeline feature |
 | `unsuppress_feature` | Re-enable a suppressed feature |
+| `get_timeline` | Timeline items with type, suppressed, health and warning/error messages; errors_only filter |
 
 ### Body Operations
 | Tool | Description |
@@ -122,6 +123,7 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 | `join_on_holes` | Bolt one occurrence to another hole-to-hole, mover placed outside the fixed part; rigid/revolute, rotation; returns interference_volume |
 | `list_joints` | Joints and as-built joints: type, occurrences, value, limits, health |
 | `get_bom` | Parts grouped by component: count, mass, motor/servo counts, total mass |
+| `set_joint_value` | Drive a joint (deg / cm) and set its limits; temporary by default, persist=true writes angle/offset |
 
 ### Inspection & Analysis
 | Tool | Description |

@@ -149,6 +149,8 @@ def test_expected_tools_present():
         "join_on_holes",
         "list_joints",
         "get_bom",
+        "set_joint_value",
+        "get_timeline",
         # inspection / analysis
         "measure_distance",
         "measure_angle",

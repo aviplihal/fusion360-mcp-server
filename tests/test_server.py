@@ -93,6 +93,7 @@ class TestToolAnnotations:
 
         read_only_names = {
             "find_holes",
+            "get_timeline",
             "list_faces",
             "list_joints",
             "get_bom",
