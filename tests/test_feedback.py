@@ -26,6 +26,10 @@ class TestHintClassification:
             ("Invalid input: angle must be > 0", "INVALID_INPUT"),
             ("Unknown command: bogus", "UNKNOWN_COMMAND"),
             ("Operation timeout after 30s", "TIMEOUT"),
+            (
+                "3 : First component to move is grounded, it can not move.",
+                "JOINT_GROUNDED_FIRST",
+            ),
         ],
     )
     def test_classify_known_messages(self, msg, expected_kind):

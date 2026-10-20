@@ -135,15 +135,18 @@ def _get_object_info(p: dict) -> dict:
 
 def _get_bounding_box(p: dict) -> dict:
     name = p.get("name", "Unknown")
-    return {
+    result = {
         "found": True,
-        "type": "body",
+        "type": "assembly" if name == "root" else "body",
         "name": name,
         "min": [0.0, 0.0, 0.0],
         "max": [50.0, 30.0, 15.0],
         "size": [50.0, 30.0, 15.0],
         "center": [25.0, 15.0, 7.5],
     }
+    if name == "root":
+        result["size_in"] = [round(s / 2.54, 3) for s in result["size"]]
+    return result
 
 
 def _create_sketch(p: dict) -> dict:
@@ -337,28 +340,58 @@ def _circular_pattern(p: dict) -> dict:
 # ── assembly tools ────────────────────────────────────────────────────
 
 
+def _occ_name(name: str) -> str:
+    """Mock occurrence name: names that already look like one pass through."""
+    return name if ":" in name else f"{name}:1"
+
+
 def _create_component(p: dict) -> dict:
-    return {
-        "component_name": p.get("name", "Component1"),
-        "parent": p.get("parent_name", "RootComponent"),
-    }
+    name = p.get("name", "Component1")
+    occ = f"{name}:1"
+    if p.get("parent_name"):
+        occ = f"{_occ_name(p['parent_name'])}+{occ}"
+    return {"created": True, "name": name, "occurrence": occ, "component": name}
 
 
 def _add_joint(p: dict) -> dict:
     return {
-        "component_one": p.get("component_one", "Comp1"),
-        "component_two": p.get("component_two", "Comp2"),
-        "joint_type": p.get("joint_type", "rigid"),
+        "created": True,
         "joint_name": "Joint_mock",
+        "joint_type": p.get("joint_type", "rigid"),
+        "occurrence_one": _occ_name(p.get("component_one", "Comp1")),
+        "occurrence_two": _occ_name(p.get("component_two", "Comp2")),
     }
 
 
 def _list_components(_p: dict) -> dict:
     return {
         "components": [
-            {"name": "RootComponent", "bodies": ["Body1"]},
-            {"name": "SubComponent1", "bodies": []},
+            {"name": "RootComponent", "is_root": True},
+            {
+                "name": "Channel",
+                "occurrence": "Channel:1",
+                "is_root": False,
+                "is_visible": True,
+                "is_grounded": True,
+            },
+            {
+                "name": "Channel",
+                "occurrence": "Channel:2",
+                "is_root": False,
+                "is_visible": True,
+                "is_grounded": False,
+            },
         ],
+        "count": 3,
+    }
+
+
+def _ground_occurrence(p: dict) -> dict:
+    occ = _occ_name(p.get("occurrence", "Comp1"))
+    return {
+        "occurrence": occ,
+        "component": occ.split("+")[-1].split(":")[0],
+        "grounded": p.get("grounded", True),
     }
 
 
@@ -661,17 +694,21 @@ def _create_torus(p: dict) -> dict:
 
 def _create_as_built_joint(p: dict) -> dict:
     return {
-        "component_one": p.get("component_one", "Comp1"),
-        "component_two": p.get("component_two", "Comp2"),
-        "joint_type": p.get("joint_type", "rigid"),
+        "created": True,
         "joint_name": "AsBuiltJoint_mock",
+        "joint_type": p.get("joint_type", "rigid"),
+        "occurrence_one": _occ_name(p.get("component_one", "Comp1")),
+        "occurrence_two": _occ_name(p.get("component_two", "Comp2")),
     }
 
 
 def _create_rigid_group(p: dict) -> dict:
+    names = [_occ_name(n) for n in p.get("component_names", [])]
     return {
-        "component_names": p.get("component_names", []),
+        "created": True,
         "rigid_group_name": "RigidGroup_mock",
+        "component_count": len(names),
+        "occurrences": names,
     }
 
 
@@ -716,11 +753,7 @@ def _create_section_analysis(p: dict) -> dict:
 
 
 def _check_interference(p: dict) -> dict:
-    return {
-        "component_names": p.get("component_names", []),
-        "interference_count": 0,
-        "interferences": [],
-    }
+    return {"interferences": [], "count": 0}
 
 
 def _compare_meshes(p: dict) -> dict:
@@ -1063,6 +1096,7 @@ _DISPATCH: dict[str, Any] = {
     # assembly (extended)
     "create_as_built_joint": _create_as_built_joint,
     "create_rigid_group": _create_rigid_group,
+    "ground_occurrence": _ground_occurrence,
     # inspection / analysis
     "measure_distance": _measure_distance,
     "measure_angle": _measure_angle,

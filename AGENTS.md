@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is an MCP server (93 tools) that connects AI coding agents to Autodesk Fusion 360 for CAD automation. It consists of two pieces:
+This is an MCP server (94 tools) that connects AI coding agents to Autodesk Fusion 360 for CAD automation. It consists of two pieces:
 
 1. **MCP Server** (this repo) — speaks MCP protocol over stdio, forwards commands to Fusion via TCP
 2. **Fusion 360 Add-in** — runs inside Fusion, executes commands on the main thread via CustomEvent bridge
@@ -16,7 +16,7 @@ Claude Code ──stdio──> MCP Server ──TCP :9876──> Fusion Add-in �
 
 The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion API calls to the main thread. Socket threads submit work items and block on a per-item `threading.Event` until the main thread completes execution.
 
-## Available tools (93)
+## Available tools (94)
 
 ### Scene & Query
 | Tool | Description |
@@ -110,10 +110,11 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 ### Assembly
 | Tool | Description |
 |------|-------------|
-| `create_component` | Create a sub-assembly component |
-| `add_joint` | Joint between two components |
+| `create_component` | Create a sub-assembly component; returns its occurrence name |
+| `add_joint` | Joint between two occurrences |
 | `create_as_built_joint` | Joint from current positions |
-| `create_rigid_group` | Lock components together |
+| `create_rigid_group` | Lock occurrences together |
+| `ground_occurrence` | Fix an occurrence in place (or release it) |
 
 ### Inspection & Analysis
 | Tool | Description |
@@ -217,6 +218,7 @@ Known `error_kind` values: `PROFILE_NOT_CLOSED`, `SKETCH_NOT_FOUND`, `BODY_NOT_F
 - **One operation per tool call.** Never batch multiple operations — Fusion's API is not thread-safe and complex scripts crash the add-in.
 - **No loops inside execute_code.** If you need to create 3 similar features, make 3 separate tool calls.
 - **Keep execute_code under ~15 lines.** Prefer the dedicated tools over execute_code whenever possible.
+- **Name parts by occurrence.** Copies of one part share a component name (`Channel`) but have unique occurrence names (`Channel:1`, `Channel:2`); `list_components` shows them. Assembly tools accept either, and error with the candidates when a component name is ambiguous.
 - **Units are centimeters.** Fusion's internal API uses cm, not mm.
 - **30-second timeout.** Commands that take longer than 30s will return a timeout error.
 - **body_name preferred over body_index.** Use named lookups when possible.

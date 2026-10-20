@@ -141,6 +141,7 @@ def test_expected_tools_present():
         # assembly (extended)
         "create_as_built_joint",
         "create_rigid_group",
+        "ground_occurrence",
         # inspection / analysis
         "measure_distance",
         "measure_angle",

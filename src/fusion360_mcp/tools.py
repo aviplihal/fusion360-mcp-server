@@ -7,6 +7,12 @@ JSON Schema that the MCP SDK validates before forwarding arguments.
 
 import mcp.types as types
 
+# Shared description for parameters that name an occurrence.
+_OCC_NAME = (
+    "Occurrence name (e.g. 'Channel:2'), full path ('Drivetrain:1+Channel:2'), "
+    "or a component name used by only one occurrence"
+)
+
 TOOLS: list[dict] = [
     # ── scene / query ────────────────────────────────────────────────
     {
@@ -34,10 +40,10 @@ TOOLS: list[dict] = [
         "name": "get_bounding_box",
         "title": "Get Bounding Box",
         "description": (
-            "Axis-aligned bounding box for a body or component by name. "
-            "Returns min, max, size, and center in cm (Fusion internal units). "
-            "For components, unions bounding boxes of all contained bodies. "
-            "Useful for measuring imported reference geometry."
+            "Axis-aligned bounding box for a body, an occurrence (including "
+            "everything nested under it), or the whole design (name='root'). "
+            "Returns min, max, size, and center in cm in assembly coordinates; "
+            "'root' also returns size_in (inches) for robot size checks."
         ),
         "inputSchema": {
             "type": "object",
@@ -45,7 +51,10 @@ TOOLS: list[dict] = [
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Body or component name",
+                    "description": (
+                        "Body name, occurrence name (e.g. 'Channel:2'), "
+                        "or 'root' for the whole design"
+                    ),
                 },
             },
         },
@@ -525,7 +534,11 @@ TOOLS: list[dict] = [
     {
         "name": "create_component",
         "title": "Create Component",
-        "description": "Create a new component (sub-assembly) in the design",
+        "description": (
+            "Create a new component (sub-assembly) in the design. Returns the "
+            "name Fusion actually used (it makes names unique) and the "
+            "occurrence name."
+        ),
         "inputSchema": {
             "type": "object",
             "required": ["name"],
@@ -533,7 +546,7 @@ TOOLS: list[dict] = [
                 "name": {"type": "string", "description": "Component name"},
                 "parent_name": {
                     "type": "string",
-                    "description": "Parent component name (omit for root)",
+                    "description": "Parent occurrence name (omit for root)",
                 },
             },
         },
@@ -541,13 +554,13 @@ TOOLS: list[dict] = [
     {
         "name": "add_joint",
         "title": "Add Joint",
-        "description": "Add a joint between two components",
+        "description": "Add a joint between two occurrences",
         "inputSchema": {
             "type": "object",
             "required": ["component_one", "component_two"],
             "properties": {
-                "component_one": {"type": "string"},
-                "component_two": {"type": "string"},
+                "component_one": {"type": "string", "description": _OCC_NAME},
+                "component_two": {"type": "string", "description": _OCC_NAME},
                 "joint_type": {
                     "type": "string",
                     "enum": [
@@ -567,7 +580,11 @@ TOOLS: list[dict] = [
     {
         "name": "list_components",
         "title": "List Components",
-        "description": "List all components in the design",
+        "description": (
+            "List all components in the design with their occurrence names "
+            "(e.g. 'Channel:2') and grounded state. Use occurrence names to "
+            "tell copies of the same part apart."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {},
@@ -1608,8 +1625,8 @@ TOOLS: list[dict] = [
                 "joint_type",
             ],
             "properties": {
-                "component_one": {"type": "string"},
-                "component_two": {"type": "string"},
+                "component_one": {"type": "string", "description": _OCC_NAME},
+                "component_two": {"type": "string", "description": _OCC_NAME},
                 "joint_type": {
                     "type": "string",
                     "enum": [
@@ -1638,13 +1655,29 @@ TOOLS: list[dict] = [
                     "type": "array",
                     "items": {"type": "string"},
                     "minItems": 2,
-                    "description": "Names of components to group",
+                    "description": "Occurrence names to group",
                 },
                 "include_children": {
                     "type": "boolean",
                     "default": True,
                     "description": ("Include child sub-components"),
                 },
+            },
+        },
+    },
+    {
+        "name": "ground_occurrence",
+        "title": "Ground Occurrence",
+        "description": (
+            "Fix an occurrence in place (or release it). Every assembly needs "
+            "one grounded part for joints to move the others against."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["occurrence"],
+            "properties": {
+                "occurrence": {"type": "string", "description": _OCC_NAME},
+                "grounded": {"type": "boolean", "default": True},
             },
         },
     },
@@ -1740,7 +1773,10 @@ TOOLS: list[dict] = [
                     "type": "array",
                     "items": {"type": "string"},
                     "minItems": 2,
-                    "description": ("Names of components to check"),
+                    "description": (
+                        "Occurrence names to check (each includes its "
+                        "nested occurrences)"
+                    ),
                 },
                 "include_coincident_faces": {
                     "type": "boolean",
@@ -2461,6 +2497,7 @@ _IDEMPOTENT = {
     "set_parameter",
     "set_appearance",
     "set_color",
+    "ground_occurrence",
     "cam_list_setups",
     "cam_list_operations",
     "cam_get_operation_info",

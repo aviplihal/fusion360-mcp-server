@@ -53,6 +53,11 @@ class TestMockSceneQuery:
         assert len(result["size"]) == 3
         assert len(result["center"]) == 3
 
+    def test_get_bounding_box_root_has_inches(self):
+        result = mock_command("get_bounding_box", {"name": "root"})
+        assert result["type"] == "assembly"
+        assert result["size_in"][0] == round(50.0 / 2.54, 3)
+
     def test_import_mesh(self):
         result = mock_command("import_mesh", {
             "file_path": "/tmp/wheel_arch.stl",
@@ -304,7 +309,14 @@ class TestMockNewGeometry:
 class TestMockAssembly:
     def test_create_component(self):
         result = mock_command("create_component", {"name": "Bracket"})
-        assert result["component_name"] == "Bracket"
+        assert result["name"] == "Bracket"
+        assert result["occurrence"] == "Bracket:1"
+
+    def test_create_component_nested(self):
+        result = mock_command(
+            "create_component", {"name": "Arm", "parent_name": "Lift:1"}
+        )
+        assert result["occurrence"] == "Lift:1+Arm:1"
 
     def test_add_joint(self):
         result = mock_command(
@@ -317,11 +329,26 @@ class TestMockAssembly:
         )
         assert result["joint_type"] == "revolute"
         assert "joint_name" in result
+        assert result["occurrence_one"] == "A:1"
 
     def test_list_components(self):
         result = mock_command("list_components")
         assert "components" in result
-        assert len(result["components"]) > 0
+        occs = [c["occurrence"] for c in result["components"] if not c["is_root"]]
+        # Two copies of the same component are told apart by occurrence name.
+        assert occs == ["Channel:1", "Channel:2"]
+
+    def test_ground_occurrence(self):
+        result = mock_command("ground_occurrence", {"occurrence": "Channel:2"})
+        assert result["occurrence"] == "Channel:2"
+        assert result["component"] == "Channel"
+        assert result["grounded"] is True
+
+    def test_unground_occurrence(self):
+        result = mock_command(
+            "ground_occurrence", {"occurrence": "Channel:2", "grounded": False}
+        )
+        assert result["grounded"] is False
 
 
 class TestMockExport:
@@ -623,7 +650,7 @@ class TestMockAssemblyExtended:
                 "joint_type": "revolute",
             },
         )
-        assert result["component_one"] == "Arm"
+        assert result["occurrence_one"] == "Arm:1"
         assert result["joint_type"] == "revolute"
         assert "joint_name" in result
 
@@ -634,7 +661,7 @@ class TestMockAssemblyExtended:
                 "component_names": ["A", "B", "C"],
             },
         )
-        assert result["component_names"] == ["A", "B", "C"]
+        assert result["occurrences"] == ["A:1", "B:1", "C:1"]
         assert "rigid_group_name" in result
 
 
@@ -694,8 +721,8 @@ class TestMockInspection:
                 "component_names": ["Gear1", "Gear2"],
             },
         )
-        assert result["component_names"] == ["Gear1", "Gear2"]
-        assert "interference_count" in result
+        assert result["count"] == 0
+        assert result["interferences"] == []
 
 
 class TestMockAppearance:

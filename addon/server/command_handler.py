@@ -23,6 +23,7 @@ import adsk.fusion
 from . import get_logger
 from . import hints as _hints
 from . import hole_geometry as _hole_geom
+from . import occurrence_refs as _occ_refs
 from . import parameter_units as _param_units
 
 log = get_logger("handler")
@@ -183,6 +184,7 @@ class CommandHandler:
                 "add_joint": self.add_joint,
                 "create_as_built_joint": self.create_as_built_joint,
                 "create_rigid_group": self.create_rigid_group,
+                "ground_occurrence": self.ground_occurrence,
                 # inspection / analysis
                 "measure_distance": self.measure_distance,
                 "measure_angle": self.measure_angle,
@@ -333,13 +335,77 @@ class CommandHandler:
         raise RuntimeError(f"Body '{name}' not found")
 
     def _component_by_name(self, name: str):
+        """Component by component name (unique in Fusion) or occurrence name."""
+        design = self._design()
+        if design.rootComponent.name == name:
+            return design.rootComponent
+        for comp in design.allComponents:
+            if comp.name == name:
+                return comp
+        try:
+            return self._occurrence(name).component
+        except RuntimeError:
+            raise RuntimeError(f"Component '{name}' not found") from None
+
+    def _occurrence(self, name: str):
+        """Occurrence (root-context proxy) by path, occurrence or component name.
+
+        Raises with the candidate list when a component name is shared by
+        several occurrences (four copies of the same channel).
+        """
+        occs = list(self._root().allOccurrences)
+        rows = [(o.fullPathName, o.component.name) for o in occs]
+        return occs[_occ_refs.pick_occurrence(name, rows)]
+
+    @staticmethod
+    def _occ_info(occ) -> dict:
+        return {"occurrence": occ.fullPathName, "component": occ.component.name}
+
+    def _resolve_ref(self, ref: str):
+        """Face or edge (root-context proxy) for a ref like 'Channel:2/b0/f37'."""
+        occ_path, body_i, kind, idx = _occ_refs.parse_ref(ref)
+        bodies = (
+            self._occurrence(occ_path).bRepBodies
+            if occ_path
+            else self._root().bRepBodies
+        )
+        if body_i >= bodies.count:
+            raise RuntimeError(f"Ref '{ref}': body index {body_i} out of range")
+        body = bodies.item(body_i)
+        items = body.faces if kind == "face" else body.edges
+        if idx >= items.count:
+            raise RuntimeError(f"Ref '{ref}': {kind} index {idx} out of range")
+        return items.item(idx)
+
+    @staticmethod
+    def _bbox_union(bodies):
+        """(min, max) over *bodies*, or None. Use body proxies for assembly
+        coordinates — Component.boundingBox is stale for moved occurrences."""
+        boxes = []
+        for b in bodies:
+            bb = b.boundingBox
+            boxes.append(
+                (
+                    [bb.minPoint.x, bb.minPoint.y, bb.minPoint.z],
+                    [bb.maxPoint.x, bb.maxPoint.y, bb.maxPoint.z],
+                )
+            )
+        return _occ_refs.union_bbox(boxes)
+
+    def _all_bodies(self, occ=None):
+        """Body proxies in root coordinates: the whole design, or *occ* and
+        everything nested under it."""
         root = self._root()
-        if root.name == name:
-            return root
-        for occ in root.allOccurrences:
-            if occ.component.name == name:
-                return occ.component
-        raise RuntimeError(f"Component '{name}' not found")
+        if occ is None:
+            bodies = list(root.bRepBodies)
+            prefix = None
+        else:
+            bodies = list(occ.bRepBodies)
+            prefix = occ.fullPathName + "+"
+        for o in root.allOccurrences:
+            if prefix is None or o.fullPathName.startswith(prefix):
+                bodies.extend(o.bRepBodies)
+        return bodies
 
     def _construction_plane(self, plane: str):
         root = self._root()
@@ -540,8 +606,10 @@ class CommandHandler:
             components.append(
                 {
                     "name": occ.component.name,
+                    "occurrence": occ.fullPathName,
                     "is_root": False,
                     "is_visible": occ.isVisible,
+                    "is_grounded": occ.isGrounded,
                 }
             )
         return {"components": components, "count": len(components)}
@@ -572,34 +640,27 @@ class CommandHandler:
         except RuntimeError:
             pass
 
-        # Fall back to component: union bbox of all contained bodies
-        try:
-            comp = self._component_by_name(name)
-        except RuntimeError:
-            return {"found": False, "name": name}
+        # Whole design, or one occurrence and everything nested under it.
+        # Unions body proxies so moved occurrences are in assembly coordinates.
+        if name in ("root", self._root().name):
+            obj_type, bodies = "assembly", self._all_bodies()
+        else:
+            try:
+                occ = self._occurrence(name)
+            except RuntimeError as exc:
+                if "matches" in str(exc):
+                    raise
+                return {"found": False, "name": name}
+            obj_type, bodies = "occurrence", self._all_bodies(occ)
 
-        mn = [float("inf")] * 3
-        mx = [float("-inf")] * 3
-
-        def _extend(bodies):
-            for i in range(bodies.count):
-                bb = bodies.item(i).boundingBox
-                lo = [bb.minPoint.x, bb.minPoint.y, bb.minPoint.z]
-                hi = [bb.maxPoint.x, bb.maxPoint.y, bb.maxPoint.z]
-                for axis in range(3):
-                    if lo[axis] < mn[axis]:
-                        mn[axis] = lo[axis]
-                    if hi[axis] > mx[axis]:
-                        mx[axis] = hi[axis]
-
-        _extend(comp.bRepBodies)
-        for occ in comp.allOccurrences:
-            _extend(occ.bRepBodies)
-
-        if mn[0] == float("inf"):
-            return {"found": True, "type": "component", "name": name, "empty": True}
-
-        return _payload("component", mn, mx)
+        box = self._bbox_union(bodies)
+        if box is None:
+            return {"found": True, "type": obj_type, "name": name, "empty": True}
+        result = _payload(obj_type, *box)
+        if obj_type == "assembly":
+            # FTC size limits are in inches.
+            result["size_in"] = [round(s / 2.54, 3) for s in result["size"]]
+        return result
 
     # ------------------------------------------------------------------
     # Sketch
@@ -2469,27 +2530,23 @@ class CommandHandler:
     # ------------------------------------------------------------------
 
     def create_component(self, name: str, parent_name: str = None):
-        root = self._root()
-        parent = self._component_by_name(parent_name) if parent_name else root
+        parent_occ = self._occurrence(parent_name) if parent_name else None
+        parent = parent_occ.component if parent_occ else self._root()
 
         occ = parent.occurrences.addNewComponent(adsk.core.Matrix3D.create())
         occ.component.name = name
-        return {"created": True, "name": name}
+        if parent_occ is not None:
+            occ = occ.createForAssemblyContext(parent_occ)
+        # Fusion makes component names unique ("Part" -> "Part (1)"), so
+        # report what it actually used.
+        return {"created": True, "name": occ.component.name, **self._occ_info(occ)}
 
     def add_joint(
         self, component_one: str, component_two: str, joint_type: str = "rigid"
     ):
         root = self._root()
-
-        occ1 = occ2 = None
-        for occ in root.allOccurrences:
-            if occ.component.name == component_one:
-                occ1 = occ
-            if occ.component.name == component_two:
-                occ2 = occ
-
-        if not occ1 or not occ2:
-            raise RuntimeError("One or both components not found")
+        occ1 = self._occurrence(component_one)
+        occ2 = self._occurrence(component_two)
 
         joints = root.joints
         joint_types = {
@@ -2506,54 +2563,67 @@ class CommandHandler:
         if jt is None:
             raise RuntimeError(f"Unknown joint type: {joint_type}")
 
-        # Create joint geometry from origin points
-        origin1 = occ1.component.originConstructionPoint
-        origin2 = occ2.component.originConstructionPoint
-        geo1 = adsk.fusion.JointGeometry.createByPoint(occ1, origin1)
-        geo2 = adsk.fusion.JointGeometry.createByPoint(occ2, origin2)
+        # Create joint geometry from origin points.  createByPoint takes a
+        # single point, so pass each origin as a proxy in its occurrence.
+        origin1 = occ1.component.originConstructionPoint.createForAssemblyContext(occ1)
+        origin2 = occ2.component.originConstructionPoint.createForAssemblyContext(occ2)
+        geo1 = adsk.fusion.JointGeometry.createByPoint(origin1)
+        geo2 = adsk.fusion.JointGeometry.createByPoint(origin2)
 
         inp = joints.createInput(geo1, geo2)
         if joint_type == "rigid":
             inp.setAsRigidJointMotion()
-        joints.add(inp)
-        return {"created": True, "joint_type": joint_type}
+        joint = joints.add(inp)
+        return {
+            "created": True,
+            "joint_name": joint.name,
+            "joint_type": joint_type,
+            "occurrence_one": occ1.fullPathName,
+            "occurrence_two": occ2.fullPathName,
+        }
 
     def create_as_built_joint(
         self, component_one: str, component_two: str, joint_type: str = "rigid"
     ):
         root = self._root()
-
-        occ1 = occ2 = None
-        for occ in root.allOccurrences:
-            if occ.component.name == component_one:
-                occ1 = occ
-            if occ.component.name == component_two:
-                occ2 = occ
-
-        if not occ1 or not occ2:
-            raise RuntimeError("One or both components not found")
+        occ1 = self._occurrence(component_one)
+        occ2 = self._occurrence(component_two)
 
         as_built = root.asBuiltJoints
         inp = as_built.createInput(occ1, occ2, None)
-        as_built.add(inp)
-        return {"created": True, "joint_type": joint_type}
+        joint = as_built.add(inp)
+        return {
+            "created": True,
+            "joint_name": joint.name,
+            "joint_type": joint_type,
+            "occurrence_one": occ1.fullPathName,
+            "occurrence_two": occ2.fullPathName,
+        }
 
     def create_rigid_group(self, component_names: list, include_children: bool = True):
         root = self._root()
         occs = adsk.core.ObjectCollection.create()
-
+        names = []
         for name in component_names:
-            for occ in root.allOccurrences:
-                if occ.component.name == name:
-                    occs.add(occ)
-                    break
+            occ = self._occurrence(name)
+            occs.add(occ)
+            names.append(occ.fullPathName)
 
         if occs.count < 2:
             raise RuntimeError("Need at least 2 components for rigid group")
 
-        groups = root.rigidGroups
-        groups.add(occs, include_children)
-        return {"created": True, "component_count": occs.count}
+        group = root.rigidGroups.add(occs, include_children)
+        return {
+            "created": True,
+            "rigid_group_name": group.name,
+            "component_count": occs.count,
+            "occurrences": names,
+        }
+
+    def ground_occurrence(self, occurrence: str, grounded: bool = True):
+        occ = self._occurrence(occurrence)
+        occ.isGrounded = bool(grounded)
+        return {**self._occ_info(occ), "grounded": occ.isGrounded}
 
     # ------------------------------------------------------------------
     # Inspection / Analysis
@@ -2649,14 +2719,17 @@ class CommandHandler:
     def check_interference(
         self, component_names: list, include_coincident_faces: bool = False
     ):
-        root = self._root()
         bodies = adsk.core.ObjectCollection.create()
-
+        # (body name, bbox, occurrence path) per input body. Interference
+        # results are temporary bodies with no assembly context, so they are
+        # mapped back to occurrences by name + bbox overlap.
+        inputs = []
         for name in component_names:
-            for occ in root.allOccurrences:
-                if occ.component.name == name:
-                    for b in occ.bRepBodies:
-                        bodies.add(b)
+            for b in self._all_bodies(self._occurrence(name)):
+                bodies.add(b)
+                inputs.append(
+                    (b.name, self._bbox_union([b]), b.assemblyContext.fullPathName)
+                )
 
         if bodies.count < 2:
             raise RuntimeError("Need at least 2 components with bodies")
@@ -2673,10 +2746,21 @@ class CommandHandler:
         if interference is not None:
             for i in range(interference.count):
                 result = interference.item(i)
+                one, two = result.entityOne, result.entityTwo
+                overlap = self._bbox_union([result.interferenceBody])
+                occs = sorted(
+                    {
+                        path
+                        for body_name, box, path in inputs
+                        if body_name in (one.name, two.name)
+                        and _occ_refs.boxes_overlap(box, overlap)
+                    }
+                )
                 results.append(
                     {
-                        "body_one": result.entityOne.name,
-                        "body_two": result.entityTwo.name,
+                        "body_one": one.name,
+                        "body_two": two.name,
+                        "occurrences": occs,
                         "volume": result.interferenceBody.volume,
                     }
                 )
@@ -3629,20 +3713,23 @@ class CommandHandler:
                 return None
             root = design.rootComponent
 
-            # Count bodies recursively (root + occurrences).
-            body_count = root.bRepBodies.count
+            # Collect body proxies recursively (root + occurrences).
+            bodies = list(root.bRepBodies)
             try:
                 for occ in design.rootComponent.allOccurrences:
-                    body_count += occ.bRepBodies.count
+                    bodies.extend(occ.bRepBodies)
             except Exception:
                 pass  # allOccurrences can fail on empty designs
+            body_count = len(bodies)
 
+            # root.boundingBox is stale for moved occurrences; union the
+            # proxies instead (they are in assembly coordinates).
             bbox_dict = None
             if body_count > 0:
                 try:
-                    bbox = root.boundingBox
-                    if bbox is not None:
-                        bbox_dict = self._bbox_dict(bbox)
+                    box = self._bbox_union(bodies)
+                    if box is not None:
+                        bbox_dict = {"min": box[0], "max": box[1]}
                 except Exception:
                     bbox_dict = None
 
