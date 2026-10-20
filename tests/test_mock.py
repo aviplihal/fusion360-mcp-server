@@ -53,6 +53,11 @@ class TestMockSceneQuery:
         assert len(result["size"]) == 3
         assert len(result["center"]) == 3
 
+    def test_get_bounding_box_root_has_inches(self):
+        result = mock_command("get_bounding_box", {"name": "root"})
+        assert result["type"] == "assembly"
+        assert result["size_in"][0] == round(50.0 / 2.54, 3)
+
     def test_import_mesh(self):
         result = mock_command("import_mesh", {
             "file_path": "/tmp/wheel_arch.stl",
@@ -304,7 +309,14 @@ class TestMockNewGeometry:
 class TestMockAssembly:
     def test_create_component(self):
         result = mock_command("create_component", {"name": "Bracket"})
-        assert result["component_name"] == "Bracket"
+        assert result["name"] == "Bracket"
+        assert result["occurrence"] == "Bracket:1"
+
+    def test_create_component_nested(self):
+        result = mock_command(
+            "create_component", {"name": "Arm", "parent_name": "Lift:1"}
+        )
+        assert result["occurrence"] == "Lift:1+Arm:1"
 
     def test_add_joint(self):
         result = mock_command(
@@ -317,11 +329,202 @@ class TestMockAssembly:
         )
         assert result["joint_type"] == "revolute"
         assert "joint_name" in result
+        assert result["occurrence_one"] == "A:1"
 
     def test_list_components(self):
         result = mock_command("list_components")
-        assert "components" in result
-        assert len(result["components"]) > 0
+        kids = result["components"][0]["children"]
+        # Two copies of the same component are told apart by occurrence name.
+        assert [c["occurrence"] for c in kids] == [
+            "Drive:1+Channel:1",
+            "Drive:1+Channel:2",
+        ]
+        assert "axis" not in kids[0] and kids[1]["angle"] == 90.0
+        assert result["parts"]["Channel"]["part_number"] == "1120-0001-0336"
+
+    def test_list_components_depth(self):
+        top = mock_command("list_components", {"depth": 1})["components"][0]
+        assert "children" not in top
+        assert top["child_count"] == 2
+
+    def test_join_on_holes(self):
+        result = mock_command(
+            "join_on_holes",
+            {
+                "occ_a": "Bracket:2",
+                "hole_a": "Bracket:2/b0/f0",
+                "occ_b": "Plate:1",
+                "hole_b": "Plate:1/b0/f61",
+                "joint_type": "revolute",
+            },
+        )
+        assert result["moved"] == "Bracket:2"
+        assert result["fixed"] == "Plate:1"
+        assert result["joint_type"] == "revolute"
+        assert result["interference_volume"] == 0.0
+        assert result["health"] == "ok"
+
+    def test_list_joints(self):
+        result = mock_command("list_joints")
+        assert result["count"] == len(result["joints"])
+        rev = result["joints"][1]
+        assert rev["type"] == "revolute"
+        assert set(rev) >= {"name", "one", "two", "value", "suppressed", "health"}
+
+    def test_get_bom(self):
+        result = mock_command("get_bom")
+        assert result["motor_count"] == 2
+        assert sum(p["count"] for p in result["parts"]) == result["total_count"]
+        assert all(len(p.get("occurrences", [])) <= 5 for p in result["parts"])
+
+    def test_check_robot_rules_whole_robot(self):
+        result = mock_command("check_robot_rules")
+        assert result["scope"] == "robot"
+        assert {c["rule"] for c in result["checks"]} == {"R102", "R105", "R503"}
+        assert result["passed"] is True and len(result["size_in"]) == 3
+
+    def test_check_robot_rules_subsystem(self):
+        result = mock_command(
+            "check_robot_rules",
+            {
+                "subsystem": "Intake:1",
+                "envelope": {"min": [0, 0, 0], "max": [40, 20, 30]},
+                "budget": {"motors": 1, "servos": 2},
+            },
+        )
+        assert result["scope"] == "subsystem"
+        assert result["occurrence"] == "Intake:1"
+        checks = [c["check"] for c in result["checks"]]
+        assert checks[0] == "inside envelope"
+        assert "motors ≤ 1" in checks and "servos ≤ 2" in checks
+
+    def test_document_tools(self):
+        docs = mock_command("list_documents")
+        assert docs["count"] == len(docs["documents"])
+        assert set(docs["documents"][0]) == {"name", "active", "saved", "modified"}
+        assert (
+            mock_command("new_document", {"design_type": "direct"})["design_type"]
+            == "direct"
+        )
+        assert (
+            mock_command("open_document", {"file_path": "/x/Arm.f3d"})["name"] == "Arm"
+        )
+        assert mock_command("open_document", {"name": "Robot"})["source"] == "cloud"
+        assert mock_command("activate_document", {"name": "Robot"})["active"] is True
+        saved = mock_command("save_document", {"name": "Bot", "folder": "FTC"})
+        assert saved["folder"] == "FTC" and saved["new_version"] is False
+        closed = mock_command("close_document", {"name": "Robot", "save": True})
+        assert closed["saved"] is True
+
+    def test_ground_occurrence(self):
+        result = mock_command("ground_occurrence", {"occurrence": "Channel:2"})
+        assert result["occurrence"] == "Channel:2"
+        assert result["component"] == "Channel"
+        assert result["grounded"] is True
+
+    def test_set_joint_value_revolute(self):
+        result = mock_command(
+            "set_joint_value",
+            {"joint": "Revolute 1", "value": 90, "limits": {"min": -45, "max": 120}},
+        )
+        assert result["type"] == "revolute"
+        assert result["values"] == {"rotation_deg": 90.0}
+        assert result["limits"] == {"rotation": {"min": -45, "max": 120}}
+        assert result["persisted"] is False
+        assert "moved_bbox" in result
+        assert "deltas" in result  # parts move, so it is a mutation
+
+    def test_set_joint_value_cylindrical_persist(self):
+        result = mock_command(
+            "set_joint_value",
+            {"joint": "Cylindrical 3", "value": 30, "value2": 2, "persist": True},
+        )
+        assert result["values"] == {"rotation_deg": 30.0, "slide_cm": 2.0}
+        assert result["persisted"] is True
+
+    def test_get_timeline(self):
+        result = mock_command("get_timeline")
+        assert result["count"] == 5
+        assert result["marker_position"] == 5
+        assert result["problems"] == 1
+        assert result["items"][0] == {
+            "i": 0,
+            "name": "Base:1",
+            "type": "Occurrence",
+            "suppressed": False,
+            "health": "healthy",
+        }
+        assert "deltas" not in result
+
+    def test_get_timeline_errors_only_and_paging(self):
+        only = mock_command("get_timeline", {"errors_only": True})
+        assert [r["name"] for r in only["items"]] == ["Extrude1"]
+        assert only["items"][0]["message"]
+        paged = mock_command("get_timeline", {"offset": 1, "limit": 2})
+        assert [r["i"] for r in paged["items"]] == [1, 2]
+        assert paged["truncated"] is True
+
+    def test_insert_part(self):
+        result = mock_command(
+            "insert_part",
+            {"file_path": "/parts/1120-0001-0336.step", "translation": [1, 2, 3]},
+        )
+        assert result["occurrence"] == "1120-0001-0336:1"
+        assert result["part_number"] == "1120-0001-0336"
+        assert result["reused"] is False
+        assert result["bbox"]["min"] == [1, 2, 3]
+
+    def test_insert_part_named_into_parent(self):
+        result = mock_command(
+            "insert_part",
+            {"file_path": "/p/x.step", "name": "Channel", "parent": "Drive:1"},
+        )
+        assert result["occurrence"] == "Drive:1+Channel:1"
+
+    def test_move_occurrence_renumbers(self):
+        result = mock_command(
+            "move_occurrence", {"occurrence": "Plate:1", "translation": [5, 0, 0]}
+        )
+        assert result["previous_occurrence"] == "Plate:1"
+        assert result["occurrence"] == "Plate:2"
+        assert result["translation"] == [5, 0, 0]
+
+    def test_add_joint_with_geometry(self):
+        result = mock_command(
+            "add_joint",
+            {
+                "geometry_one": {"ref": "Channel:2/b0/f37", "keypoint": "end"},
+                "geometry_two": {"ref": "Plate:1/b0/f5", "keypoint": "start"},
+            },
+        )
+        assert result["occurrence_one"] == "Channel:2"
+        assert result["occurrence_two"] == "Plate:1"
+        assert result["health"] == "ok"
+
+    def test_find_holes(self):
+        result = mock_command("find_holes", {"occurrence": "Plate:1", "limit": 2})
+        assert result["count"] == 4
+        assert len(result["holes"]) == 2
+        assert result["truncated"] is True
+        hole = result["holes"][0]
+        assert hole["ref"].startswith("Plate:1/b0/f")
+        assert set(hole) >= {"d", "start", "end", "axis"}
+
+    def test_find_holes_diameter_filter(self):
+        result = mock_command("find_holes", {"occurrence": "Plate:1", "diameter": 0.8})
+        assert result["count"] == 0
+
+    def test_list_faces(self):
+        result = mock_command("list_faces", {"occurrence": "Plate:1", "type": "all"})
+        assert {f["type"] for f in result["faces"]} == {"planar", "cylindrical"}
+        planar = mock_command("list_faces", {"occurrence": "Plate:1"})
+        assert [f["type"] for f in planar["faces"]] == ["planar"]
+
+    def test_unground_occurrence(self):
+        result = mock_command(
+            "ground_occurrence", {"occurrence": "Channel:2", "grounded": False}
+        )
+        assert result["grounded"] is False
 
 
 class TestMockExport:
@@ -475,6 +678,25 @@ class TestMockSplines:
         assert result["spline_type"] == "control_points"
 
 
+class TestMockComponentParam:
+    @pytest.mark.parametrize(
+        "tool, params",
+        [
+            ("create_sketch", {"plane": "xy"}),
+            ("create_box", {"length": 1, "width": 1, "height": 1}),
+            ("create_cylinder", {"radius": 1, "height": 1}),
+            ("create_sphere", {"radius": 1}),
+            ("create_torus", {"major_radius": 2, "minor_radius": 0.5}),
+        ],
+    )
+    def test_component_is_echoed(self, tool, params):
+        result = mock_command(tool, {**params, "component": "Arm:1"})
+        assert result["component"] == "Arm:1"
+
+    def test_component_defaults_to_root(self):
+        assert mock_command("create_sketch", {})["component"] == "RootComponent"
+
+
 class TestMockCurveOps:
     def test_offset_curve(self):
         result = mock_command(
@@ -623,7 +845,7 @@ class TestMockAssemblyExtended:
                 "joint_type": "revolute",
             },
         )
-        assert result["component_one"] == "Arm"
+        assert result["occurrence_one"] == "Arm:1"
         assert result["joint_type"] == "revolute"
         assert "joint_name" in result
 
@@ -634,7 +856,7 @@ class TestMockAssemblyExtended:
                 "component_names": ["A", "B", "C"],
             },
         )
-        assert result["component_names"] == ["A", "B", "C"]
+        assert result["occurrences"] == ["A:1", "B:1", "C:1"]
         assert "rigid_group_name" in result
 
 
@@ -694,8 +916,8 @@ class TestMockInspection:
                 "component_names": ["Gear1", "Gear2"],
             },
         )
-        assert result["component_names"] == ["Gear1", "Gear2"]
-        assert "interference_count" in result
+        assert result["count"] == 0
+        assert result["interferences"] == []
 
 
 class TestMockAppearance:

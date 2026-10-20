@@ -7,6 +7,54 @@ JSON Schema that the MCP SDK validates before forwarding arguments.
 
 import mcp.types as types
 
+# Shared description for parameters that name an occurrence.
+_OCC_NAME = (
+    "Occurrence name (e.g. 'Channel:2'), full path ('Drivetrain:1+Channel:2'), "
+    "or a component name used by only one occurrence"
+)
+
+# Joint geometry on one side: a face/edge ref from find_holes / list_faces.
+_JOINT_GEOMETRY = {
+    "type": "object",
+    "required": ["ref"],
+    "properties": {
+        "ref": {
+            "type": "string",
+            "description": "Face or edge ref, e.g. 'Channel:2/b0/f37'",
+        },
+        "keypoint": {
+            "type": "string",
+            "enum": ["start", "end", "middle", "center"],
+            "description": (
+                "Point on it to join at. Holes: start/end are the hole's two "
+                "ends as find_holes reports them (default start). Planar "
+                "faces and edges default to center."
+            ),
+        },
+    },
+}
+
+_JOINT_TYPES = [
+    "rigid",
+    "revolute",
+    "slider",
+    "cylindrical",
+    "pin_slot",
+    "planar",
+    "ball",
+]
+
+# Joint limits for set_joint_value, in the motion's unit (deg or cm).
+_JOINT_LIMITS = {
+    "type": "object",
+    "properties": {
+        "min": {"type": ["number", "null"]},
+        "max": {"type": ["number", "null"]},
+        "rest": {"type": ["number", "null"]},
+    },
+    "additionalProperties": False,
+}
+
 TOOLS: list[dict] = [
     # ── scene / query ────────────────────────────────────────────────
     {
@@ -34,10 +82,10 @@ TOOLS: list[dict] = [
         "name": "get_bounding_box",
         "title": "Get Bounding Box",
         "description": (
-            "Axis-aligned bounding box for a body or component by name. "
-            "Returns min, max, size, and center in cm (Fusion internal units). "
-            "For components, unions bounding boxes of all contained bodies. "
-            "Useful for measuring imported reference geometry."
+            "Axis-aligned bounding box for a body, an occurrence (including "
+            "everything nested under it), or the whole design (name='root'). "
+            "Returns min, max, size, and center in cm in assembly coordinates; "
+            "'root' also returns size_in (inches) for robot size checks."
         ),
         "inputSchema": {
             "type": "object",
@@ -45,7 +93,10 @@ TOOLS: list[dict] = [
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Body or component name",
+                    "description": (
+                        "Body name, occurrence name (e.g. 'Channel:2'), "
+                        "or 'root' for the whole design"
+                    ),
                 },
             },
         },
@@ -54,7 +105,11 @@ TOOLS: list[dict] = [
     {
         "name": "create_sketch",
         "title": "Create Sketch",
-        "description": "Create a new sketch on xy/yz/xz plane, optionally offset",
+        "description": (
+            "Create a new sketch on xy/yz/xz plane, optionally offset. With "
+            "component, the sketch uses that component's planes and "
+            "coordinates, and extrude/revolve/sweep build there too"
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -66,6 +121,11 @@ TOOLS: list[dict] = [
                 "z_offset": {
                     "type": "number",
                     "description": "Offset distance from the plane (cm)",
+                },
+                "component": {
+                    "type": "string",
+                    "description": "Build inside this occurrence's component "
+                    "(omit for root). " + _OCC_NAME,
                 },
             },
         },
@@ -525,7 +585,11 @@ TOOLS: list[dict] = [
     {
         "name": "create_component",
         "title": "Create Component",
-        "description": "Create a new component (sub-assembly) in the design",
+        "description": (
+            "Create a new component (sub-assembly) in the design. Returns the "
+            "name Fusion actually used (it makes names unique) and the "
+            "occurrence name."
+        ),
         "inputSchema": {
             "type": "object",
             "required": ["name"],
@@ -533,7 +597,7 @@ TOOLS: list[dict] = [
                 "name": {"type": "string", "description": "Component name"},
                 "parent_name": {
                     "type": "string",
-                    "description": "Parent component name (omit for root)",
+                    "description": "Parent occurrence name (omit for root)",
                 },
             },
         },
@@ -541,25 +605,44 @@ TOOLS: list[dict] = [
     {
         "name": "add_joint",
         "title": "Add Joint",
-        "description": "Add a joint between two components",
+        "description": (
+            "Join occurrence one onto occurrence two; one moves, so two should "
+            "be the grounded or already-placed part. Each side is either "
+            "geometry ({ref, keypoint} from find_holes/list_faces) or, if "
+            "omitted, the occurrence's origin. To bolt parts at holes "
+            "(find_holes): one=end + two=start puts the moving part against "
+            "the fixed hole's start side; one=start + two=end puts it on the "
+            "end side. Pick the side from the start/end coordinates. Motion "
+            "(revolute, slider...) is about the hole axis "
+            "or face normal. Returns health; 'warning' means Fusion couldn't "
+            "solve it and nothing moved."
+        ),
         "inputSchema": {
             "type": "object",
-            "required": ["component_one", "component_two"],
             "properties": {
-                "component_one": {"type": "string"},
-                "component_two": {"type": "string"},
+                "component_one": {"type": "string", "description": _OCC_NAME},
+                "component_two": {"type": "string", "description": _OCC_NAME},
+                "geometry_one": _JOINT_GEOMETRY,
+                "geometry_two": _JOINT_GEOMETRY,
                 "joint_type": {
                     "type": "string",
-                    "enum": [
-                        "rigid",
-                        "revolute",
-                        "slider",
-                        "cylindrical",
-                        "pin_slot",
-                        "planar",
-                        "ball",
-                    ],
+                    "enum": _JOINT_TYPES,
                     "default": "rigid",
+                },
+                "offset": {
+                    "type": "number",
+                    "default": 0,
+                    "description": "Gap along the joint axis, cm",
+                },
+                "angle": {
+                    "type": "number",
+                    "default": 0,
+                    "description": "Rotation about the joint axis, degrees",
+                },
+                "flip": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Reverse the moving part's direction",
                 },
             },
         },
@@ -567,10 +650,25 @@ TOOLS: list[dict] = [
     {
         "name": "list_components",
         "title": "List Components",
-        "description": "List all components in the design",
+        "description": (
+            "Assembly tree of occurrences: occurrence name (e.g. 'Channel:2', "
+            "use it to tell copies apart), component, translation (cm, "
+            "assembly coordinates), axis/angle only when rotated, "
+            "grounded only when true, visible only when false, children. "
+            "'parts' gives each component's part_number and source file once."
+        ),
         "inputSchema": {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "depth": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": (
+                        "Levels to expand (1 = top level only; deeper "
+                        "levels show child_count). Omit for all."
+                    ),
+                },
+            },
         },
     },
     # ── export ─────────────────────────────────────────────────────────
@@ -1458,6 +1556,11 @@ TOOLS: list[dict] = [
                 "center_x": {"type": "number", "default": 0},
                 "center_y": {"type": "number", "default": 0},
                 "center_z": {"type": "number", "default": 0},
+                "component": {
+                    "type": "string",
+                    "description": "Build inside this occurrence's component "
+                    "(omit for root). " + _OCC_NAME,
+                },
             },
         },
     },
@@ -1541,6 +1644,11 @@ TOOLS: list[dict] = [
                     "default": "z",
                     "description": "Cylinder axis direction",
                 },
+                "component": {
+                    "type": "string",
+                    "description": "Build inside this occurrence's component "
+                    "(omit for root). " + _OCC_NAME,
+                },
             },
         },
     },
@@ -1558,6 +1666,11 @@ TOOLS: list[dict] = [
                 "center_x": {"type": "number", "default": 0},
                 "center_y": {"type": "number", "default": 0},
                 "center_z": {"type": "number", "default": 0},
+                "component": {
+                    "type": "string",
+                    "description": "Build inside this occurrence's component "
+                    "(omit for root). " + _OCC_NAME,
+                },
             },
         },
     },
@@ -1589,6 +1702,11 @@ TOOLS: list[dict] = [
                     "enum": ["x", "y", "z"],
                     "default": "z",
                 },
+                "component": {
+                    "type": "string",
+                    "description": "Build inside this occurrence's component "
+                    "(omit for root). " + _OCC_NAME,
+                },
             },
         },
     },
@@ -1597,8 +1715,9 @@ TOOLS: list[dict] = [
         "name": "create_as_built_joint",
         "title": "Create As-Built Joint",
         "description": (
-            "Create a joint from components' current positions "
-            "(easier than geometric joints)"
+            "Create a joint between two occurrences where they are now, "
+            "without moving them. Non-rigid types need 'geometry' (a face or "
+            "edge ref) to define the axis, e.g. a hole for a revolute pivot."
         ),
         "inputSchema": {
             "type": "object",
@@ -1608,21 +1727,14 @@ TOOLS: list[dict] = [
                 "joint_type",
             ],
             "properties": {
-                "component_one": {"type": "string"},
-                "component_two": {"type": "string"},
+                "component_one": {"type": "string", "description": _OCC_NAME},
+                "component_two": {"type": "string", "description": _OCC_NAME},
                 "joint_type": {
                     "type": "string",
-                    "enum": [
-                        "rigid",
-                        "revolute",
-                        "slider",
-                        "cylindrical",
-                        "pin_slot",
-                        "planar",
-                        "ball",
-                    ],
+                    "enum": _JOINT_TYPES,
                     "default": "rigid",
                 },
+                "geometry": _JOINT_GEOMETRY,
             },
         },
     },
@@ -1638,13 +1750,440 @@ TOOLS: list[dict] = [
                     "type": "array",
                     "items": {"type": "string"},
                     "minItems": 2,
-                    "description": "Names of components to group",
+                    "description": "Occurrence names to group",
                 },
                 "include_children": {
                     "type": "boolean",
                     "default": True,
                     "description": ("Include child sub-components"),
                 },
+            },
+        },
+    },
+    {
+        "name": "find_holes",
+        "title": "Find Holes",
+        "description": (
+            "List the holes (concave cylindrical faces) of an occurrence and "
+            "everything under it, in assembly coordinates (cm): ref, diameter "
+            "d, start/end points of the hole axis (the exact points add_joint "
+            "keypoints start/end use), axis and length. Filter by diameter "
+            "(e.g. 0.4 for goBILDA M4 holes) and sort by distance from 'near' "
+            "to keep the list short; by_diameter summarizes all of them."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["occurrence"],
+            "properties": {
+                "occurrence": {"type": "string", "description": _OCC_NAME},
+                "diameter": {"type": "number", "description": "cm"},
+                "tolerance": {"type": "number", "default": 0.01},
+                "near": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Sort by distance from this [x, y, z] (cm)",
+                },
+                "limit": {"type": "integer", "default": 50, "minimum": 1},
+            },
+        },
+    },
+    {
+        "name": "list_faces",
+        "title": "List Faces",
+        "description": (
+            "List an occurrence's faces with refs for add_joint, in assembly "
+            "coordinates (cm). Planar: normal, center, area (largest first). "
+            "Cylindrical: d, axis, center, concave (true = hole)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["occurrence"],
+            "properties": {
+                "occurrence": {"type": "string", "description": _OCC_NAME},
+                "type": {
+                    "type": "string",
+                    "enum": ["planar", "cylindrical", "all"],
+                    "default": "planar",
+                },
+                "near": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Sort by distance from this [x, y, z] (cm)",
+                },
+                "limit": {"type": "integer", "default": 50, "minimum": 1},
+            },
+        },
+    },
+    {
+        "name": "ground_occurrence",
+        "title": "Ground Occurrence",
+        "description": (
+            "Fix an occurrence in place (or release it). Every assembly needs "
+            "one grounded part for joints to move the others against."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["occurrence"],
+            "properties": {
+                "occurrence": {"type": "string", "description": _OCC_NAME},
+                "grounded": {"type": "boolean", "default": True},
+            },
+        },
+    },
+    {
+        "name": "insert_part",
+        "title": "Insert Part",
+        "description": (
+            "Insert a STEP (.step/.stp) or Fusion (.f3d) file as a new "
+            "occurrence, e.g. a goBILDA channel. Inserting the same file again "
+            "reuses the already-imported component (fast), so screws and "
+            "standoffs can be added many times. Optional placement: rotate "
+            "'angle' degrees about 'axis' through the origin, then translate "
+            "(cm). Returns the occurrence name to use in joints."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["file_path"],
+            "properties": {
+                "file_path": {"type": "string", "description": "Absolute path"},
+                "name": {
+                    "type": "string",
+                    "description": (
+                        "Component name for a first import (default: the "
+                        "file's own name). Ignored when reused."
+                    ),
+                },
+                "parent": {
+                    "type": "string",
+                    "description": "Parent occurrence (omit for root). " + _OCC_NAME,
+                },
+                "translation": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "[x, y, z] in cm",
+                },
+                "axis": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "default": [0, 0, 1],
+                },
+                "angle": {"type": "number", "default": 0, "description": "Degrees"},
+            },
+        },
+    },
+    {
+        "name": "join_on_holes",
+        "title": "Join On Holes",
+        "description": (
+            "Bolt occ_a (moves) to occ_b (stays) hole-to-hole, with the mover "
+            "placed outside occ_b: the side is picked from the fixed part's "
+            "shape (a channel's outer face) or, for a flat plate, the side the "
+            "mover is on now. Re-joins flipped automatically if the result "
+            "interferes. Holes are refs from find_holes. rotation turns the "
+            "mover about the bolt axis (0/90/180 on hole grids). Returns "
+            "joint, health, moved_bbox and interference_volume (cm³, between "
+            "just these two parts; 0 = clean)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["occ_a", "hole_a", "occ_b", "hole_b"],
+            "properties": {
+                "occ_a": {
+                    "type": "string",
+                    "description": "Moving occurrence. " + _OCC_NAME,
+                },
+                "hole_a": {
+                    "type": "string",
+                    "description": "Hole ref on occ_a, e.g. 'Bracket:2/b0/f3'",
+                },
+                "occ_b": {
+                    "type": "string",
+                    "description": "Fixed occurrence. " + _OCC_NAME,
+                },
+                "hole_b": {"type": "string", "description": "Hole ref on occ_b"},
+                "rotation": {
+                    "type": "number",
+                    "default": 0,
+                    "description": "Degrees about the bolt axis",
+                },
+                "joint_type": {
+                    "type": "string",
+                    "enum": _JOINT_TYPES,
+                    "default": "rigid",
+                    "description": "revolute = pivot on the bolt",
+                },
+                "flip": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Put the mover on the other side",
+                },
+                "offset": {
+                    "type": "number",
+                    "default": 0,
+                    "description": "Gap along the bolt axis (spacer), cm",
+                },
+            },
+        },
+    },
+    {
+        "name": "list_joints",
+        "title": "List Joints",
+        "description": (
+            "List joints and as-built joints: name, type, occurrences one "
+            "(moves) and two, value (revolute deg, slider cm, cylindrical/"
+            "pin_slot [deg, cm]), limits if set, suppressed, health."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_bom",
+        "title": "Get BOM",
+        "description": (
+            "Bill of materials: occurrences grouped by component with count, "
+            "part_number, mass_g per unit, class (motor/servo by part-number "
+            "prefix) and occurrence names when count ≤ 5. Totals: "
+            "total_count, total_mass_g, motor_count, servo_count. Components "
+            "without bodies (pure groupings) are skipped."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "check_robot_rules",
+        "title": "Check Robot Rules",
+        "description": (
+            "FTC size and actuator rules. Without 'subsystem': the whole "
+            "robot against the season's kb/rules constraints (R102 starting "
+            "cube, R105 expansion box with its vertical side on 'up', R503 "
+            "motor/servo limits). With 'subsystem' (an occurrence): its bbox "
+            "inside 'envelope', no interference with other top-level "
+            "components, and motor/servo counts within 'budget'. Sizes use "
+            "the current joint pose: drive joints with set_joint_value to "
+            "check stowed and extended. Returns passed, checks[], size_cm, size_in."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "subsystem": {"type": "string", "description": _OCC_NAME},
+                "envelope": {
+                    "type": "object",
+                    "description": "Allowed box in cm: {min: [x,y,z], max: [x,y,z]}",
+                    "properties": {
+                        "min": {"type": "array", "items": {"type": "number"}},
+                        "max": {"type": "array", "items": {"type": "number"}},
+                    },
+                    "required": ["min", "max"],
+                },
+                "budget": {
+                    "type": "object",
+                    "description": "Max actuators, e.g. {motors: 2, servos: 1}",
+                    "additionalProperties": {"type": "integer"},
+                },
+                "up": {
+                    "type": "string",
+                    "enum": ["x", "y", "z"],
+                    "default": "z",
+                    "description": "Design axis that points up from the field",
+                },
+                "rules": {
+                    "type": "object",
+                    "description": (
+                        "Override constraints.json (same keys: starting_size, "
+                        "expansion_size, actuators)"
+                    ),
+                },
+            },
+        },
+    },
+    {
+        "name": "list_documents",
+        "title": "List Documents",
+        "description": "Open Fusion documents: name, active, saved, modified.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "new_document",
+        "title": "New Document",
+        "description": "Create a new design document and make it active.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "design_type": {
+                    "type": "string",
+                    "enum": ["parametric", "direct"],
+                    "default": "parametric",
+                },
+            },
+        },
+    },
+    {
+        "name": "open_document",
+        "title": "Open Document",
+        "description": (
+            "Open a design and make it active: 'name' activates an open "
+            "document or opens a cloud design from the active project "
+            "(searches 3 folder levels below 'folder', default the project "
+            "root); 'file_path' opens a local .f3d."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "file_path": {"type": "string", "description": "Local .f3d"},
+                "folder": {
+                    "type": "string",
+                    "description": "Cloud folder to search from, e.g. FTC/2026",
+                },
+            },
+        },
+    },
+    {
+        "name": "activate_document",
+        "title": "Activate Document",
+        "description": "Switch to an open document by name (see list_documents).",
+        "inputSchema": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {"name": {"type": "string"}},
+        },
+    },
+    {
+        "name": "save_document",
+        "title": "Save Document",
+        "description": (
+            "Save to the Fusion cloud (outward-facing: creates a version in "
+            "the user's active project — confirm with the user first). A "
+            "saved document gets a new version; an unsaved one needs 'name' "
+            "and optionally 'folder' (\"FTC/2026\", created if missing)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Save-as name"},
+                "folder": {
+                    "type": "string",
+                    "description": "Path under the project root",
+                },
+                "description": {"type": "string", "default": "Saved by MCP"},
+                "document": {"type": "string", "description": "Default: active"},
+            },
+        },
+    },
+    {
+        "name": "close_document",
+        "title": "Close Document",
+        "description": (
+            "Close an open document by its exact name (see list_documents). "
+            "Refuses unsaved changes unless save=true or discard_changes=true."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": {"type": "string"},
+                "save": {"type": "boolean", "default": False},
+                "discard_changes": {"type": "boolean", "default": False},
+            },
+        },
+    },
+    {
+        "name": "move_occurrence",
+        "title": "Move Occurrence",
+        "description": (
+            "Position an occurrence (component instance). Absolute by default: "
+            "rotate 'angle' degrees about 'axis' through the origin, then "
+            "translate (cm). relative=true rotates about the occurrence's own "
+            "origin and shifts from where it is. In parametric designs the "
+            "occurrence is re-inserted, so its number changes (Plate:1 -> "
+            "Plate:2): use the returned name. Refuses if joints hold it."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["occurrence"],
+            "properties": {
+                "occurrence": {"type": "string", "description": _OCC_NAME},
+                "translation": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "[x, y, z] in cm",
+                },
+                "axis": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "default": [0, 0, 1],
+                },
+                "angle": {"type": "number", "default": 0, "description": "Degrees"},
+                "relative": {"type": "boolean", "default": False},
+            },
+        },
+    },
+    {
+        "name": "set_joint_value",
+        "title": "Set Joint Value",
+        "description": (
+            "Drive a joint (or as-built joint) by name. Revolute: value = "
+            "degrees. Slider: value = cm. Cylindrical / pin_slot: value = "
+            "rotation (deg), value2 = slide (cm). limits / limits2 = {min, "
+            "max, rest} for the same motions (a number enables that limit, "
+            "null disables it). By default the value is temporary, like "
+            "dragging the part: good for checking stowed vs extended size or "
+            "interference, but Fusion resets it to 0 on the next recompute "
+            "(any modeling call, or changing limits), and values outside the "
+            "limits are refused (see warnings). "
+            "persist=true writes the joint's angle/offset instead, which "
+            "lasts (not for as-built joints, nor motions off the joint's Z "
+            "axis). Returns the joint's current values, limits, health and "
+            "the moved occurrence's bbox."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["joint"],
+            "properties": {
+                "joint": {
+                    "type": "string",
+                    "description": "Joint name, e.g. 'Revolute 1'",
+                },
+                "value": {
+                    "type": "number",
+                    "description": "Rotation (deg) or, for sliders, slide (cm)",
+                },
+                "value2": {
+                    "type": "number",
+                    "description": "Cylindrical / pin_slot slide (cm)",
+                },
+                "limits": _JOINT_LIMITS,
+                "limits2": _JOINT_LIMITS,
+                "persist": {"type": "boolean", "default": False},
+            },
+        },
+    },
+    {
+        "name": "get_timeline",
+        "title": "Get Timeline",
+        "description": (
+            "List the design timeline: per item i, name, type, suppressed, "
+            "health (healthy|warning|error|...) and message when unhealthy. "
+            "Collapsed groups are one row with 'items' and their unhealthy "
+            "children under 'issues'. 'problems' counts warning/error rows; "
+            "errors_only=true lists just those. Read-only."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "offset": {"type": "integer", "default": 0, "minimum": 0},
+                "limit": {"type": "integer", "default": 100, "minimum": 1},
+                "errors_only": {"type": "boolean", "default": False},
             },
         },
     },
@@ -1740,7 +2279,10 @@ TOOLS: list[dict] = [
                     "type": "array",
                     "items": {"type": "string"},
                     "minItems": 2,
-                    "description": ("Names of components to check"),
+                    "description": (
+                        "Occurrence names to check (each includes its "
+                        "nested occurrences)"
+                    ),
                 },
                 "include_coincident_faces": {
                     "type": "boolean",
@@ -2428,6 +2970,13 @@ TOOLS: list[dict] = [
 # side-effect profile so MCP clients can auto-approve safe operations.
 
 _READ_ONLY = {
+    "find_holes",
+    "get_timeline",
+    "list_faces",
+    "list_joints",
+    "get_bom",
+    "check_robot_rules",
+    "list_documents",
     "get_scene_info",
     "get_object_info",
     "get_bounding_box",
@@ -2445,8 +2994,16 @@ _READ_ONLY = {
     "get_design_type",
     "render_view",
 }
-_DESTRUCTIVE = {"delete_all", "delete_parameter"}
+_DESTRUCTIVE = {"delete_all", "delete_parameter", "close_document"}
 _IDEMPOTENT = {
+    "find_holes",
+    "get_timeline",
+    "list_faces",
+    "list_joints",
+    "get_bom",
+    "check_robot_rules",
+    "list_documents",
+    "activate_document",
     "ping",
     "get_scene_info",
     "get_object_info",
@@ -2461,6 +3018,8 @@ _IDEMPOTENT = {
     "set_parameter",
     "set_appearance",
     "set_color",
+    "ground_occurrence",
+    "set_joint_value",
     "cam_list_setups",
     "cam_list_operations",
     "cam_get_operation_info",

@@ -43,6 +43,10 @@ _MUTATION_MOCKS: frozenset[str] = frozenset(
         "create_cylinder",
         "create_sphere",
         "create_torus",
+        # assembly placement
+        "insert_part",
+        "move_occurrence",
+        "set_joint_value",
         "thicken_surface",
         "patch_surface",
         "stitch_surfaces",
@@ -135,20 +139,27 @@ def _get_object_info(p: dict) -> dict:
 
 def _get_bounding_box(p: dict) -> dict:
     name = p.get("name", "Unknown")
-    return {
+    result = {
         "found": True,
-        "type": "body",
+        "type": "assembly" if name == "root" else "body",
         "name": name,
         "min": [0.0, 0.0, 0.0],
         "max": [50.0, 30.0, 15.0],
         "size": [50.0, 30.0, 15.0],
         "center": [25.0, 15.0, 7.5],
     }
+    if name == "root":
+        result["size_in"] = [round(s / 2.54, 3) for s in result["size"]]
+    return result
 
 
 def _create_sketch(p: dict) -> dict:
     plane = p.get("plane", "xy")
-    return {"sketch_name": f"Sketch_mock_{plane}", "plane": plane}
+    return {
+        "sketch_name": f"Sketch_mock_{plane}",
+        "plane": plane,
+        "component": p.get("component") or "RootComponent",
+    }
 
 
 def _draw_rectangle(p: dict) -> dict:
@@ -176,6 +187,7 @@ def _extrude(p: dict) -> dict:
         "body_name": "Body_mock",
         "height": p.get("height", 1),
         "operation": p.get("operation", "new_body"),
+        "component": "RootComponent",
     }
 
 
@@ -337,28 +349,414 @@ def _circular_pattern(p: dict) -> dict:
 # ── assembly tools ────────────────────────────────────────────────────
 
 
+def _occ_name(name: str) -> str:
+    """Mock occurrence name: names that already look like one pass through."""
+    return name if ":" in name else f"{name}:1"
+
+
 def _create_component(p: dict) -> dict:
-    return {
-        "component_name": p.get("name", "Component1"),
-        "parent": p.get("parent_name", "RootComponent"),
-    }
+    name = p.get("name", "Component1")
+    occ = f"{name}:1"
+    if p.get("parent_name"):
+        occ = f"{_occ_name(p['parent_name'])}+{occ}"
+    return {"created": True, "name": name, "occurrence": occ, "component": name}
+
+
+def _ref_occ(ref: str) -> str:
+    """Occurrence part of a face/edge ref ('Channel:2/b0/f37' -> 'Channel:2')."""
+    return ref.rsplit("/", 2)[0]
+
+
+def _side_occ(p: dict, n: str, default: str) -> str:
+    geo = p.get(f"geometry_{n}")
+    if geo:
+        return _ref_occ(geo["ref"])
+    return _occ_name(p.get(f"component_{n}", default))
 
 
 def _add_joint(p: dict) -> dict:
     return {
-        "component_one": p.get("component_one", "Comp1"),
-        "component_two": p.get("component_two", "Comp2"),
-        "joint_type": p.get("joint_type", "rigid"),
+        "created": True,
         "joint_name": "Joint_mock",
+        "joint_type": p.get("joint_type", "rigid"),
+        "occurrence_one": _side_occ(p, "one", "Comp1"),
+        "occurrence_two": _side_occ(p, "two", "Comp2"),
+        "health": "ok",
+        "moved_bbox": {"min": [0.0, 0.0, 0.5], "max": [4.0, 2.0, 1.0]},
     }
 
 
-def _list_components(_p: dict) -> dict:
+def _find_holes(p: dict) -> dict:
+    occ = _occ_name(p.get("occurrence", "Comp1"))
+    holes = [
+        {
+            "ref": f"{occ}/b0/f{i + 3}",
+            "d": 0.4,
+            "start": [0.4 + 0.8 * i, 0.4, 0.5],
+            "end": [0.4 + 0.8 * i, 0.4, 0.0],
+            "axis": [0.0, 0.0, -1.0],
+            "length": 0.5,
+        }
+        for i in range(4)
+    ]
+    want = p.get("diameter")
+    if want is not None and abs(want - 0.4) > p.get("tolerance", 0.01):
+        holes = []
+    limit = p.get("limit", 50)
     return {
-        "components": [
-            {"name": "RootComponent", "bodies": ["Body1"]},
-            {"name": "SubComponent1", "bodies": []},
+        "occurrence": occ,
+        "count": len(holes),
+        "by_diameter": {"0.4": len(holes)} if holes else {},
+        "holes": holes[:limit],
+        "truncated": len(holes) > limit,
+    }
+
+
+def _list_faces(p: dict) -> dict:
+    occ = _occ_name(p.get("occurrence", "Comp1"))
+    faces = [
+        {
+            "ref": f"{occ}/b0/f0",
+            "type": "planar",
+            "normal": [0.0, 0.0, 1.0],
+            "center": [2.0, 1.0, 0.5],
+            "area": 8.0,
+        },
+        {
+            "ref": f"{occ}/b0/f3",
+            "type": "cylindrical",
+            "d": 0.4,
+            "axis": [0.0, 0.0, 1.0],
+            "center": [0.4, 0.4, 0.0],
+            "concave": True,
+            "area": 0.63,
+        },
+    ]
+    kind = p.get("type", "planar")
+    if kind != "all":
+        faces = [f for f in faces if f["type"] == kind]
+    return {"occurrence": occ, "count": len(faces), "faces": faces, "truncated": False}
+
+
+def _list_components(p: dict) -> dict:
+    drive = {
+        "occurrence": "Drive:1",
+        "component": "Drive",
+        "translation": [0.0, 0.0, 0.0],
+        "children": [
+            {
+                "occurrence": "Drive:1+Channel:1",
+                "component": "Channel",
+                "grounded": True,
+                "translation": [0.0, 0.0, 0.0],
+            },
+            {
+                "occurrence": "Drive:1+Channel:2",
+                "component": "Channel",
+                "translation": [0.0, 20.0, 0.0],
+                "axis": [0.0, 0.0, 1.0],
+                "angle": 90.0,
+            },
         ],
+    }
+    depth = p.get("depth")
+    if depth is not None and depth < 2:
+        drive = {k: v for k, v in drive.items() if k != "children"}
+        drive["child_count"] = 2
+    return {
+        "root": "RootComponent",
+        "root_bodies": 0,
+        "count": 3,
+        "components": [drive],
+        "parts": {
+            "Channel": {
+                "part_number": "1120-0001-0336",
+                "source": "/parts/1120-0001-0336.step",
+            }
+        },
+    }
+
+
+def _join_on_holes(p: dict) -> dict:
+    moved = _occ_name(p.get("occ_a", "Comp1"))
+    return {
+        "joint": "Rigid 1",
+        "joint_type": p.get("joint_type", "rigid"),
+        "moved": moved,
+        "fixed": _occ_name(p.get("occ_b", "Comp2")),
+        "keypoints": {"moved": "end", "fixed": "start"},
+        "side_from": "mover position",
+        "flipped": bool(p.get("flip", False)),
+        "auto_flipped": False,
+        "health": "ok",
+        "moved_bbox": {"min": [0.0, 0.0, 0.5], "max": [6.0, 1.6, 0.8]},
+        "interference_volume": 0.0,
+    }
+
+
+def _list_joints(_p: dict) -> dict:
+    return {
+        "count": 2,
+        "joints": [
+            {
+                "name": "Rigid 1",
+                "type": "rigid",
+                "one": "Bracket:1",
+                "two": "Plate:1",
+                "suppressed": False,
+                "health": "ok",
+            },
+            {
+                "name": "Revolute 2",
+                "type": "revolute",
+                "one": "Arm:1",
+                "two": "Bracket:1",
+                "value": 30.0,
+                "limits": {"rotation": {"min": -90.0, "max": 90.0}},
+                "suppressed": False,
+                "health": "ok",
+            },
+        ],
+    }
+
+
+def _get_bom(_p: dict) -> dict:
+    return {
+        "parts": [
+            {
+                "component": "Channel",
+                "part_number": "1120-0001-0336",
+                "count": 4,
+                "mass_g": 62.5,
+                "occurrences": ["Channel:1", "Channel:2", "Channel:3", "Channel:4"],
+            },
+            {
+                "component": "Motor",
+                "part_number": "5203-2402-0019",
+                "count": 2,
+                "mass_g": 425.0,
+                "class": "motor",
+                "occurrences": ["Motor:1", "Motor:2"],
+            },
+        ],
+        "unique": 2,
+        "total_count": 6,
+        "total_mass_g": 1100.0,
+        "motor_count": 2,
+        "servo_count": 0,
+    }
+
+
+def _check_robot_rules(p: dict) -> dict:
+    size = [42.0, 40.0, 38.0]
+    sub = p.get("subsystem")
+    if sub:
+        checks = [
+            {
+                "check": "no interference with other top-level components",
+                "ok": True,
+                "checked": [],
+            }
+        ]
+        if p.get("envelope"):
+            checks.insert(0, {"check": "inside envelope", "ok": True, "over_cm": {}})
+        for key, limit in (p.get("budget") or {}).items():
+            checks.append({"check": f"{key} ≤ {limit}", "ok": True, "value": 0})
+        scope = {
+            "scope": "subsystem",
+            "occurrence": _occ_name(sub),
+            "component": sub.split(":")[0],
+        }
+    else:
+        checks = [
+            {"rule": "R102", "check": "fits starting box", "ok": True, "over_cm": 0},
+            {"rule": "R105", "check": "fits expansion box", "ok": True, "over_cm": 0},
+            {"rule": "R503", "check": "motors ≤ 8", "ok": True, "value": 2},
+            {"rule": "R503", "check": "servos ≤ 8", "ok": True, "value": 0},
+        ]
+        scope = {"scope": "robot", "season": "2026-27"}
+    return {
+        **scope,
+        "passed": all(c["ok"] for c in checks),
+        "checks": checks,
+        "size_cm": size,
+        "size_in": [round(v / 2.54, 2) for v in size],
+        "note": "Sizes are for the current joint pose.",
+    }
+
+
+def _doc(name: str, active: bool = True, saved: bool = False) -> dict:
+    return {"name": name, "active": active, "saved": saved, "modified": False}
+
+
+def _list_documents(_p: dict) -> dict:
+    return {
+        "count": 2,
+        "documents": [_doc("Robot", saved=True), _doc("Untitled", active=False)],
+    }
+
+
+def _new_document(p: dict) -> dict:
+    return {**_doc("Untitled"), "design_type": p.get("design_type", "parametric")}
+
+
+def _open_document(p: dict) -> dict:
+    if p.get("file_path"):
+        name = p["file_path"].rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        return {**_doc(name), "source": "file"}
+    return {**_doc(p.get("name") or "Robot", saved=True), "source": "cloud"}
+
+
+def _activate_document(p: dict) -> dict:
+    return _doc(p.get("name") or "Robot", saved=True)
+
+
+def _save_document(p: dict) -> dict:
+    name = p.get("name") or "Robot"
+    return {
+        **_doc(name, saved=True),
+        "project": "Mock Project",
+        **({"folder": p.get("folder") or ""} if p.get("name") else {}),
+        "new_version": not p.get("name"),
+    }
+
+
+def _close_document(p: dict) -> dict:
+    return {
+        "closed": p.get("name") or "Robot",
+        "saved": bool(p.get("save")),
+        "active": "Untitled",
+    }
+
+
+def _insert_part(p: dict) -> dict:
+    path = p.get("file_path", "/tmp/part.step")
+    stem = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    name = p.get("name") or stem
+    occ = f"{name}:1"
+    if p.get("parent"):
+        occ = f"{_occ_name(p['parent'])}+{occ}"
+    t = p.get("translation") or [0.0, 0.0, 0.0]
+    return {
+        "occurrence": occ,
+        "component": name,
+        "reused": False,
+        "part_number": stem,
+        "bodies": 1,
+        "child_occurrences": 0,
+        "bbox": {"min": t, "max": [t[0] + 4.8, t[1] + 4.8, t[2] + 33.6]},
+    }
+
+
+def _move_occurrence(p: dict) -> dict:
+    prev = _occ_name(p.get("occurrence", "Comp1"))
+    base, _, num = prev.rpartition(":")
+    occ = f"{base}:{int(num) + 1}" if num.isdigit() else prev
+    t = p.get("translation") or [0.0, 0.0, 0.0]
+    return {
+        "occurrence": occ,
+        "component": base.split("+")[-1],
+        "previous_occurrence": prev,
+        "translation": t,
+        "bbox": {"min": t, "max": [t[0] + 4.8, t[1] + 4.8, t[2] + 33.6]},
+    }
+
+
+def _ground_occurrence(p: dict) -> dict:
+    occ = _occ_name(p.get("occurrence", "Comp1"))
+    return {
+        "occurrence": occ,
+        "component": occ.split("+")[-1].split(":")[0],
+        "grounded": p.get("grounded", True),
+    }
+
+
+_MOCK_JOINT_DOFS = {
+    "Revolute 1": ("revolute", (("rotation", "deg"),)),
+    "Slider 2": ("slider", (("slide", "cm"),)),
+    "Cylindrical 3": ("cylindrical", (("rotation", "deg"), ("slide", "cm"))),
+}
+
+
+def _set_joint_value(p: dict) -> dict:
+    name = p.get("joint", "Revolute 1")
+    jtype, dofs = _MOCK_JOINT_DOFS.get(name, _MOCK_JOINT_DOFS["Revolute 1"])
+    values, limits = {}, {}
+    for (prefix, unit), v, lim in zip(
+        dofs,
+        (p.get("value"), p.get("value2")),
+        (p.get("limits"), p.get("limits2")),
+    ):
+        values[f"{prefix}_{unit}"] = float(v) if v is not None else 0.0
+        if lim:
+            kept = {k: x for k, x in lim.items() if x is not None}
+            if kept:
+                limits[prefix] = kept
+    result = {
+        "joint": name,
+        "type": jtype,
+        "occurrence_one": "Arm:1",
+        "occurrence_two": "Base:1",
+        "values": values,
+        "persisted": bool(p.get("persist", False)),
+        "health": "ok",
+        "moved_bbox": {"min": [1.5, 1.5, 1.0], "max": [7.5, 2.5, 1.5]},
+    }
+    if limits:
+        result["limits"] = limits
+    return result
+
+
+def _get_timeline(p: dict) -> dict:
+    rows = [
+        {
+            "i": 0,
+            "name": "Base:1",
+            "type": "Occurrence",
+            "suppressed": False,
+            "health": "healthy",
+        },
+        {
+            "i": 1,
+            "name": "Sketch1",
+            "type": "Sketch",
+            "suppressed": False,
+            "health": "healthy",
+        },
+        {
+            "i": 2,
+            "name": "Extrude1",
+            "type": "Extrude",
+            "suppressed": False,
+            "health": "warning",
+            "message": "Cannot extend extrusion to object.",
+        },
+        {
+            "i": 3,
+            "name": "Group1",
+            "type": "Group",
+            "suppressed": False,
+            "health": "healthy",
+            "items": 2,
+        },
+        {
+            "i": 4,
+            "name": "Revolute 1",
+            "type": "Joint",
+            "suppressed": False,
+            "health": "healthy",
+        },
+    ]
+    if p.get("errors_only"):
+        rows = [r for r in rows if r["health"] in ("warning", "error")]
+    offset, limit = p.get("offset", 0), p.get("limit", 100)
+    page = rows[offset : offset + limit]
+    return {
+        "count": 5,
+        "marker_position": 5,
+        "problems": 1,
+        "items": page,
+        "truncated": offset + len(page) < len(rows),
     }
 
 
@@ -630,6 +1028,7 @@ def _create_box(p: dict) -> dict:
         "length": p.get("length", 1),
         "width": p.get("width", 1),
         "height": p.get("height", 1),
+        "component": p.get("component") or "RootComponent",
     }
 
 
@@ -638,6 +1037,7 @@ def _create_cylinder(p: dict) -> dict:
         "body_name": "Cylinder_mock",
         "radius": p.get("radius", 1),
         "height": p.get("height", 1),
+        "component": p.get("component") or "RootComponent",
     }
 
 
@@ -645,6 +1045,7 @@ def _create_sphere(p: dict) -> dict:
     return {
         "body_name": "Sphere_mock",
         "radius": p.get("radius", 1),
+        "component": p.get("component") or "RootComponent",
     }
 
 
@@ -653,6 +1054,7 @@ def _create_torus(p: dict) -> dict:
         "body_name": "Torus_mock",
         "major_radius": p.get("major_radius", 2),
         "minor_radius": p.get("minor_radius", 0.5),
+        "component": p.get("component") or "RootComponent",
     }
 
 
@@ -661,17 +1063,22 @@ def _create_torus(p: dict) -> dict:
 
 def _create_as_built_joint(p: dict) -> dict:
     return {
-        "component_one": p.get("component_one", "Comp1"),
-        "component_two": p.get("component_two", "Comp2"),
-        "joint_type": p.get("joint_type", "rigid"),
+        "created": True,
         "joint_name": "AsBuiltJoint_mock",
+        "joint_type": p.get("joint_type", "rigid"),
+        "occurrence_one": _occ_name(p.get("component_one", "Comp1")),
+        "occurrence_two": _occ_name(p.get("component_two", "Comp2")),
+        "health": "ok",
     }
 
 
 def _create_rigid_group(p: dict) -> dict:
+    names = [_occ_name(n) for n in p.get("component_names", [])]
     return {
-        "component_names": p.get("component_names", []),
+        "created": True,
         "rigid_group_name": "RigidGroup_mock",
+        "component_count": len(names),
+        "occurrences": names,
     }
 
 
@@ -716,11 +1123,7 @@ def _create_section_analysis(p: dict) -> dict:
 
 
 def _check_interference(p: dict) -> dict:
-    return {
-        "component_names": p.get("component_names", []),
-        "interference_count": 0,
-        "interferences": [],
-    }
+    return {"interferences": [], "count": 0}
 
 
 def _compare_meshes(p: dict) -> dict:
@@ -1063,6 +1466,23 @@ _DISPATCH: dict[str, Any] = {
     # assembly (extended)
     "create_as_built_joint": _create_as_built_joint,
     "create_rigid_group": _create_rigid_group,
+    "ground_occurrence": _ground_occurrence,
+    "find_holes": _find_holes,
+    "list_faces": _list_faces,
+    "insert_part": _insert_part,
+    "move_occurrence": _move_occurrence,
+    "join_on_holes": _join_on_holes,
+    "list_joints": _list_joints,
+    "get_bom": _get_bom,
+    "check_robot_rules": _check_robot_rules,
+    "list_documents": _list_documents,
+    "new_document": _new_document,
+    "open_document": _open_document,
+    "activate_document": _activate_document,
+    "save_document": _save_document,
+    "close_document": _close_document,
+    "set_joint_value": _set_joint_value,
+    "get_timeline": _get_timeline,
     # inspection / analysis
     "measure_distance": _measure_distance,
     "measure_angle": _measure_angle,

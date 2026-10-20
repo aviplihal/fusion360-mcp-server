@@ -1,0 +1,441 @@
+{
+ "commit": "c81f4c44dc85b0c10e94057ed8577b04c6da9373",
+ "license": "CC BY-NC 2.0",
+ "pages": {
+  "active-intake": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/active-intake/index.rst",
+   "sections": 1,
+   "sha": "ec3b79f0bea30a63",
+   "words": 325
+  },
+  "actobotics": {
+   "commit": "c81f4c44dc85",
+   "file": "hardware-components/kit-and-hardware-guide/actobotics.rst",
+   "sections": 4,
+   "sha": "45cc4e4664a96f37",
+   "words": 635
+  },
+  "arms": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/arms.rst",
+   "sections": 2,
+   "sha": "c6b200d606d88ac1",
+   "words": 531
+  },
+  "belt": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/power-transmission/belt.rst",
+   "sections": 6,
+   "sha": "4d954405a87268b1",
+   "words": 1088
+  },
+  "chain": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/power-transmission/chain.rst",
+   "sections": 4,
+   "sha": "de55427f25657386",
+   "words": 844
+  },
+  "choosing-motor": {
+   "commit": "c81f4c44dc85",
+   "file": "power-and-electronics/motor-guide/choosing-motor.rst",
+   "sections": 4,
+   "sha": "6322ed2e53c56422",
+   "words": 1377
+  },
+  "choosing-servo": {
+   "commit": "c81f4c44dc85",
+   "file": "power-and-electronics/servo-guide/choosing-servo.rst",
+   "sections": 10,
+   "sha": "7a989713c0a6f453",
+   "words": 2191
+  },
+  "common-mechanisms": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/index.rst",
+   "sections": 1,
+   "sha": "0b2087a5e5864e4d",
+   "words": 22
+  },
+  "connectors-and-wires": {
+   "commit": "c81f4c44dc85",
+   "file": "power-and-electronics/connectors-and-wires.rst",
+   "sections": 2,
+   "sha": "e3e122a704a1967f",
+   "words": 615
+  },
+  "control-system": {
+   "commit": "c81f4c44dc85",
+   "file": "power-and-electronics/control-system.rst",
+   "sections": 3,
+   "sha": "8be2a8a672181a5a",
+   "words": 376
+  },
+  "dead-wheels": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/dead-wheels.rst",
+   "sections": 5,
+   "sha": "baa6f7825f2f4818",
+   "words": 1728
+  },
+  "design-tradeoffs": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/design-tradeoffs.rst",
+   "sections": 6,
+   "sha": "2dcf8151f11b925e",
+   "words": 1059
+  },
+  "direct-drive": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/power-transmission/direct-drive.rst",
+   "sections": 1,
+   "sha": "0287b3209b020204",
+   "words": 447
+  },
+  "drawer-slides": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/linear-motion-guide/drawer-slides.rst",
+   "sections": 5,
+   "sha": "8b36d0e147623df2",
+   "words": 1109
+  },
+  "driver-station-guide": {
+   "commit": "c81f4c44dc85",
+   "file": "power-and-electronics/driver-station-guide.rst",
+   "sections": 3,
+   "sha": "47d90f0b2a228fc5",
+   "words": 837
+  },
+  "drivetrain-gallery": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/drivetrains/drivetrain-gallery.rst",
+   "sections": 1,
+   "sha": "4606d7b7c8fda32e",
+   "words": 229
+  },
+  "drivetrains": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/drivetrains/index.rst",
+   "sections": 4,
+   "sha": "27b11f348f4bf764",
+   "words": 1284
+  },
+  "extrusion-slides": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/linear-motion-guide/extrusion-slides.rst",
+   "sections": 4,
+   "sha": "43b1c5088f12b859",
+   "words": 863
+  },
+  "fastener-guide": {
+   "commit": "c81f4c44dc85",
+   "file": "hardware-components/fastener-guide.rst",
+   "sections": 4,
+   "sha": "02f29f59a58a95a9",
+   "words": 925
+  },
+  "full-turret": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/turrets/full-turret.rst",
+   "sections": 2,
+   "sha": "19aa4059f77a071e",
+   "words": 381
+  },
+  "gearbox-anatomy": {
+   "commit": "c81f4c44dc85",
+   "file": "power-and-electronics/motor-guide/gearbox-anatomy.rst",
+   "sections": 3,
+   "sha": "50da889a5ed5f0ec",
+   "words": 946
+  },
+  "gears": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/power-transmission/gears.rst",
+   "sections": 4,
+   "sha": "410c49c07c13c813",
+   "words": 1172
+  },
+  "gobilda": {
+   "commit": "c81f4c44dc85",
+   "file": "hardware-components/kit-and-hardware-guide/gobilda.rst",
+   "sections": 4,
+   "sha": "c1ccad898ef6d329",
+   "words": 797
+  },
+  "hardware-components": {
+   "commit": "c81f4c44dc85",
+   "file": "hardware-components/index.rst",
+   "sections": 1,
+   "sha": "b64b9a7072d09d67",
+   "words": 14
+  },
+  "hardware-components-tips-and-tricks": {
+   "commit": "c81f4c44dc85",
+   "file": "hardware-components/tips-and-tricks.rst",
+   "sections": 1,
+   "sha": "aa05b546a5b6811d",
+   "words": 567
+  },
+  "holonomic": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/drivetrains/holonomic.rst",
+   "sections": 7,
+   "sha": "65311c1cbbe86531",
+   "words": 1804
+  },
+  "kit-and-hardware-guide": {
+   "commit": "c81f4c44dc85",
+   "file": "hardware-components/kit-and-hardware-guide/index.rst",
+   "sections": 3,
+   "sha": "67429e6830b53265",
+   "words": 582
+  },
+  "kit-and-hardware-guide-custom": {
+   "commit": "c81f4c44dc85",
+   "file": "hardware-components/kit-and-hardware-guide/custom.rst",
+   "sections": 1,
+   "sha": "ef790b3c371c6ab5",
+   "words": 206
+  },
+  "kit-glossary": {
+   "commit": "c81f4c44dc85",
+   "file": "hardware-components/kit-and-hardware-guide/kit-glossary.rst",
+   "sections": 2,
+   "sha": "ed65553d7408e4a9",
+   "words": 1194
+  },
+  "lead-screws": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/linear-motion-guide/lead-screws.rst",
+   "sections": 1,
+   "sha": "5ee3594cca2a360d",
+   "words": 167
+  },
+  "linear-bearing-slides": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/linear-motion-guide/linear-bearing-slides.rst",
+   "sections": 3,
+   "sha": "9949974a107c0341",
+   "words": 564
+  },
+  "linear-motion-guide": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/linear-motion-guide/index.rst",
+   "sections": 1,
+   "sha": "93bec6a48426beb3",
+   "words": 147
+  },
+  "linear-motion-guide-custom": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/linear-motion-guide/custom.rst",
+   "sections": 1,
+   "sha": "359363f5ce702e7c",
+   "words": 173
+  },
+  "linkages": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/linkages.rst",
+   "sections": 5,
+   "sha": "91745f8180c7d0bb",
+   "words": 946
+  },
+  "mini-turret": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/turrets/mini-turret.rst",
+   "sections": 1,
+   "sha": "98752f5626a4effa",
+   "words": 137
+  },
+  "motion-mounting": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/power-transmission/motion-mounting.rst",
+   "sections": 3,
+   "sha": "68101028b43f7705",
+   "words": 451
+  },
+  "motor-glossary": {
+   "commit": "c81f4c44dc85",
+   "file": "power-and-electronics/motor-guide/motor-glossary.rst",
+   "sections": 1,
+   "sha": "9ea777d27c294fb8",
+   "words": 296
+  },
+  "motor-guide": {
+   "commit": "c81f4c44dc85",
+   "file": "power-and-electronics/motor-guide/index.rst",
+   "sections": 1,
+   "sha": "7b156bbaf5f64501",
+   "words": 22
+  },
+  "motor-power": {
+   "commit": "c81f4c44dc85",
+   "file": "power-and-electronics/motor-guide/motor-power.rst",
+   "sections": 3,
+   "sha": "425353ce5a94da71",
+   "words": 898
+  },
+  "passive-intake-claw": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/passive-intake-claw.rst",
+   "sections": 2,
+   "sha": "7fb9a7f3fd649ad6",
+   "words": 309
+  },
+  "power-and-electronics": {
+   "commit": "c81f4c44dc85",
+   "file": "power-and-electronics/index.rst",
+   "sections": 1,
+   "sha": "aa3ffc2acaa391f5",
+   "words": 173
+  },
+  "power-and-electronics-tips-and-tricks": {
+   "commit": "c81f4c44dc85",
+   "file": "power-and-electronics/tips-and-tricks.rst",
+   "sections": 1,
+   "sha": "d40e450020ee035a",
+   "words": 170
+  },
+  "power-transmission": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/power-transmission/index.rst",
+   "sections": 1,
+   "sha": "6521377baad86637",
+   "words": 61
+  },
+  "power-transmission-glossary": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/power-transmission/power-transmission-glossary.rst",
+   "sections": 1,
+   "sha": "009753745e8313d4",
+   "words": 454
+  },
+  "principles-of-an-intake": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/active-intake/principles-of-an-intake.rst",
+   "sections": 4,
+   "sha": "bf905d25616f4490",
+   "words": 577
+  },
+  "rack-and-pinion": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/linear-motion-guide/rack-and-pinion.rst",
+   "sections": 1,
+   "sha": "df88b503c75c36a2",
+   "words": 175
+  },
+  "rev-robotics": {
+   "commit": "c81f4c44dc85",
+   "file": "hardware-components/kit-and-hardware-guide/rev-robotics.rst",
+   "sections": 5,
+   "sha": "79d395aaab668998",
+   "words": 873
+  },
+  "rigging": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/linear-motion-guide/rigging.rst",
+   "sections": 10,
+   "sha": "8a2d53faf56bd643",
+   "words": 2986
+  },
+  "sensor-glossary": {
+   "commit": "c81f4c44dc85",
+   "file": "power-and-electronics/sensor-glossary.rst",
+   "sections": 2,
+   "sha": "730c877638f21b96",
+   "words": 380
+  },
+  "servo-guide": {
+   "commit": "c81f4c44dc85",
+   "file": "power-and-electronics/servo-guide/index.rst",
+   "sections": 1,
+   "sha": "85a31492d1493a16",
+   "words": 345
+  },
+  "shaft-retention": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/power-transmission/shaft-retention.rst",
+   "sections": 2,
+   "sha": "1959ce94cc11d195",
+   "words": 385
+  },
+  "tank": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/drivetrains/tank.rst",
+   "sections": 5,
+   "sha": "d0cd8a1c8a142a03",
+   "words": 1680
+  },
+  "tetrix": {
+   "commit": "c81f4c44dc85",
+   "file": "hardware-components/kit-and-hardware-guide/tetrix.rst",
+   "sections": 4,
+   "sha": "28befebc6bd2215c",
+   "words": 909
+  },
+  "tools-list": {
+   "commit": "c81f4c44dc85",
+   "file": "hardware-components/tools-list.rst",
+   "sections": 2,
+   "sha": "502149c7124e7962",
+   "words": 302
+  },
+  "transfer-design": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/transfers/transfer-design.rst",
+   "sections": 2,
+   "sha": "56dea7e19503ff6f",
+   "words": 274
+  },
+  "transfer-types": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/transfers/transfer-types.rst",
+   "sections": 4,
+   "sha": "48615949c5ce3f78",
+   "words": 892
+  },
+  "transfers": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/transfers/index.rst",
+   "sections": 1,
+   "sha": "485c1db3cbd15afc",
+   "words": 44
+  },
+  "turrets": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/turrets/index.rst",
+   "sections": 1,
+   "sha": "6a8da0d2bb088684",
+   "words": 138
+  },
+  "types-of-intakes": {
+   "commit": "c81f4c44dc85",
+   "file": "common-mechanisms/active-intake/types-of-intakes.rst",
+   "sections": 5,
+   "sha": "ed3ec8212337b0dc",
+   "words": 1406
+  },
+  "usage-tips": {
+   "commit": "c81f4c44dc85",
+   "file": "power-and-electronics/servo-guide/usage-tips.rst",
+   "sections": 2,
+   "sha": "98d2d47c4a7f8673",
+   "words": 732
+  },
+  "wiring": {
+   "commit": "c81f4c44dc85",
+   "file": "power-and-electronics/wiring.rst",
+   "sections": 4,
+   "sha": "12d07bdf54d9f7df",
+   "words": 1370
+  },
+  "wiring-mounting-motors": {
+   "commit": "c81f4c44dc85",
+   "file": "power-and-electronics/motor-guide/wiring-mounting-motors.rst",
+   "sections": 3,
+   "sha": "3cedef37f4626cc8",
+   "words": 591
+  }
+ },
+ "repo": "https://github.com/gamemanual0/gm0"
+}

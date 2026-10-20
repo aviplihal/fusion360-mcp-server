@@ -20,10 +20,15 @@ import adsk.cam
 import adsk.core
 import adsk.fusion
 
+from . import assembly_math as _asm
 from . import get_logger
 from . import hints as _hints
 from . import hole_geometry as _hole_geom
+from . import joint_values as _joint_vals
+from . import occurrence_refs as _occ_refs
 from . import parameter_units as _param_units
+from . import robot_rules as _rules
+from . import timeline_rows as _tl_rows
 
 log = get_logger("handler")
 
@@ -34,6 +39,8 @@ class CommandHandler:
     def __init__(self):
         self.app = adsk.core.Application.get()
         self.ui = self.app.userInterface
+        # Sketch from the last create_sketch; may live in a sub-component.
+        self._last_sketch_obj = None
 
     # ------------------------------------------------------------------
     # Dispatch
@@ -88,6 +95,10 @@ class CommandHandler:
             "create_cylinder",
             "create_sphere",
             "create_torus",
+            # assembly placement
+            "insert_part",
+            "move_occurrence",
+            "set_joint_value",
             # surface / sheet metal (can produce / thicken bodies)
             "thicken_surface",
             "patch_surface",
@@ -183,6 +194,24 @@ class CommandHandler:
                 "add_joint": self.add_joint,
                 "create_as_built_joint": self.create_as_built_joint,
                 "create_rigid_group": self.create_rigid_group,
+                "ground_occurrence": self.ground_occurrence,
+                "find_holes": self.find_holes,
+                "list_faces": self.list_faces,
+                "move_occurrence": self.move_occurrence,
+                "insert_part": self.insert_part,
+                "join_on_holes": self.join_on_holes,
+                "list_joints": self.list_joints,
+                "get_bom": self.get_bom,
+                "check_robot_rules": self.check_robot_rules,
+                # documents
+                "list_documents": self.list_documents,
+                "new_document": self.new_document,
+                "open_document": self.open_document,
+                "activate_document": self.activate_document,
+                "save_document": self.save_document,
+                "close_document": self.close_document,
+                "set_joint_value": self.set_joint_value,
+                "get_timeline": self.get_timeline,
                 # inspection / analysis
                 "measure_distance": self.measure_distance,
                 "measure_angle": self.measure_angle,
@@ -267,7 +296,12 @@ class CommandHandler:
             result = {"value": result}
         result.setdefault("ok", True)
 
-        if is_mutation and snap_before is not None:
+        # Deltas across a document switch compare two different designs.
+        if (
+            is_mutation
+            and snap_before is not None
+            and not result.get("document_changed")
+        ):
             snap_after = self._snapshot()
             if snap_after is not None:
                 result["deltas"] = self._compute_deltas(snap_before, snap_after)
@@ -303,18 +337,38 @@ class CommandHandler:
         return self._design().rootComponent
 
     def _last_sketch(self):
-        root = self._root()
+        """The sketch from the last create_sketch while it is still valid in
+        the active design; otherwise the last sketch in root."""
+        design = self._design()
+        s = self._last_sketch_obj
+        if s is not None and s.isValid and s.parentComponent.parentDesign == design:
+            return s
+        root = design.rootComponent
         if root.sketches.count == 0:
             raise RuntimeError("No sketch available — create one first")
         return root.sketches.item(root.sketches.count - 1)
 
     def _sketch_by_name(self, name: str):
-        root = self._root()
-        for i in range(root.sketches.count):
-            s = root.sketches.item(i)
-            if s.name == name:
+        """Sketch by name in root first, then in every other component."""
+        design = self._design()
+        for comp in [design.rootComponent, *design.allComponents]:
+            s = comp.sketches.itemByName(name)
+            if s is not None:
                 return s
         raise RuntimeError(f"Sketch '{name}' not found")
+
+    def _target_component(self, component: str = None):
+        """Component to build in: the one behind occurrence *component*, or root."""
+        return self._occurrence(component).component if component else self._root()
+
+    @staticmethod
+    def _native(body):
+        """(native body, its component). A body inside a component comes back
+        from _body_by_name as an assembly proxy; features on it are built in
+        its own component from native entities, in component coordinates."""
+        if body.assemblyContext:
+            body = body.nativeObject
+        return body, body.parentComponent
 
     def _body_by_name(self, name: str):
         root = self._root()
@@ -333,32 +387,96 @@ class CommandHandler:
         raise RuntimeError(f"Body '{name}' not found")
 
     def _component_by_name(self, name: str):
-        root = self._root()
-        if root.name == name:
-            return root
-        for occ in root.allOccurrences:
-            if occ.component.name == name:
-                return occ.component
-        raise RuntimeError(f"Component '{name}' not found")
+        """Component by component name (unique in Fusion) or occurrence name."""
+        design = self._design()
+        if design.rootComponent.name == name:
+            return design.rootComponent
+        for comp in design.allComponents:
+            if comp.name == name:
+                return comp
+        try:
+            return self._occurrence(name).component
+        except RuntimeError:
+            raise RuntimeError(f"Component '{name}' not found") from None
 
-    def _construction_plane(self, plane: str):
+    def _occurrence(self, name: str):
+        """Occurrence (root-context proxy) by path, occurrence or component name.
+
+        Raises with the candidate list when a component name is shared by
+        several occurrences (four copies of the same channel).
+        """
+        occs = list(self._root().allOccurrences)
+        rows = [(o.fullPathName, o.component.name) for o in occs]
+        return occs[_occ_refs.pick_occurrence(name, rows)]
+
+    @staticmethod
+    def _occ_info(occ) -> dict:
+        return {"occurrence": occ.fullPathName, "component": occ.component.name}
+
+    def _resolve_ref(self, ref: str):
+        """Face or edge (root-context proxy) for a ref like 'Channel:2/b0/f37'."""
+        occ_path, body_i, kind, idx = _occ_refs.parse_ref(ref)
+        bodies = (
+            self._occurrence(occ_path).bRepBodies
+            if occ_path
+            else self._root().bRepBodies
+        )
+        if body_i >= bodies.count:
+            raise RuntimeError(f"Ref '{ref}': body index {body_i} out of range")
+        body = bodies.item(body_i)
+        items = body.faces if kind == "face" else body.edges
+        if idx >= items.count:
+            raise RuntimeError(f"Ref '{ref}': {kind} index {idx} out of range")
+        return items.item(idx)
+
+    @staticmethod
+    def _bbox_union(bodies):
+        """(min, max) over *bodies*, or None. Use body proxies for assembly
+        coordinates — Component.boundingBox is stale for moved occurrences."""
+        boxes = []
+        for b in bodies:
+            bb = b.boundingBox
+            boxes.append(
+                (
+                    [bb.minPoint.x, bb.minPoint.y, bb.minPoint.z],
+                    [bb.maxPoint.x, bb.maxPoint.y, bb.maxPoint.z],
+                )
+            )
+        return _occ_refs.union_bbox(boxes)
+
+    def _all_bodies(self, occ=None):
+        """Body proxies in root coordinates: the whole design, or *occ* and
+        everything nested under it."""
         root = self._root()
+        if occ is None:
+            bodies = list(root.bRepBodies)
+            prefix = None
+        else:
+            bodies = list(occ.bRepBodies)
+            prefix = occ.fullPathName + "+"
+        for o in root.allOccurrences:
+            if prefix is None or o.fullPathName.startswith(prefix):
+                bodies.extend(o.bRepBodies)
+        return bodies
+
+    def _construction_plane(self, plane: str, comp=None):
+        comp = comp or self._root()
         m = {
-            "xy": root.xYConstructionPlane,
-            "yz": root.yZConstructionPlane,
-            "xz": root.xZConstructionPlane,
+            "xy": comp.xYConstructionPlane,
+            "yz": comp.yZConstructionPlane,
+            "xz": comp.xZConstructionPlane,
         }
         p = m.get(plane)
         if p is None:
             raise RuntimeError(f"Unknown plane '{plane}' — use xy, yz, or xz")
         return p
 
-    def _construction_axis(self, axis: str):
-        root = self._root()
+    def _construction_axis(self, axis: str, comp=None):
+        comp = comp or self._root()
         m = {
-            "x": root.xConstructionAxis,
-            "y": root.yConstructionAxis,
-            "z": root.zConstructionAxis,
+            "x": comp.xConstructionAxis,
+            "y": comp.yConstructionAxis,
+            "z": comp.zConstructionAxis,
         }
         a = m.get(axis)
         if a is None:
@@ -533,18 +651,58 @@ class CommandHandler:
 
         return {"found": False, "name": name}
 
-    def list_components(self):
+    def list_components(self, depth: int = None):
+        """Occurrence tree. To save tokens, grounded appears only when true,
+        visible only when false, axis/angle only when rotated, and each
+        component's part_number/source once under "parts"."""
         root = self._root()
-        components = [{"name": root.name, "is_root": True}]
-        for occ in root.allOccurrences:
-            components.append(
-                {
-                    "name": occ.component.name,
-                    "is_root": False,
-                    "is_visible": occ.isVisible,
-                }
-            )
-        return {"components": components, "count": len(components)}
+        group, attr_name = self._IMPORT_SOURCE_ATTR
+        per_comp = {}  # component name -> {part_number?, source?}
+
+        def _comp_fields(comp):
+            fields = per_comp.get(comp.name)
+            if fields is None:
+                fields = {}
+                if comp.partNumber and comp.partNumber != comp.name:
+                    fields["part_number"] = comp.partNumber
+                attr = comp.attributes.itemByName(group, attr_name)
+                if attr is not None:
+                    fields["source"] = attr.value
+                per_comp[comp.name] = fields
+            return fields
+
+        def _node(occ, level):
+            comp = occ.component
+            _comp_fields(comp)
+            n = {"occurrence": occ.fullPathName, "component": comp.name}
+            # isGrounded raises on sub-component occurrences.
+            if occ.assemblyContext is None and occ.isGrounded:
+                n["grounded"] = True
+            if not occ.isVisible:
+                n["visible"] = False
+            m = occ.transform2
+            t = m.translation
+            n["translation"] = self._r((t.x, t.y, t.z))
+            rot = _asm.axis_angle(_asm.matrix_rows(m.asArray()))
+            if rot is not None:
+                n["axis"] = self._r(rot[0])
+                n["angle"] = round(rot[1], 3)
+            kids = occ.childOccurrences
+            if kids.count:
+                if depth is None or level < depth:
+                    n["children"] = [_node(k, level + 1) for k in kids]
+                else:
+                    n["child_count"] = kids.count
+            return n
+
+        tree = [_node(o, 1) for o in root.occurrences]
+        return {
+            "root": root.name,
+            "root_bodies": root.bRepBodies.count,
+            "count": root.allOccurrences.count,
+            "components": tree,
+            "parts": {k: v for k, v in per_comp.items() if v},
+        }
 
     def get_bounding_box(self, name: str):
         """Axis-aligned bounding box for a body or component. Values in cm."""
@@ -572,54 +730,55 @@ class CommandHandler:
         except RuntimeError:
             pass
 
-        # Fall back to component: union bbox of all contained bodies
-        try:
-            comp = self._component_by_name(name)
-        except RuntimeError:
-            return {"found": False, "name": name}
+        # Whole design, or one occurrence and everything nested under it.
+        # Unions body proxies so moved occurrences are in assembly coordinates.
+        if name in ("root", self._root().name):
+            obj_type, bodies = "assembly", self._all_bodies()
+        else:
+            try:
+                occ = self._occurrence(name)
+            except RuntimeError as exc:
+                if "matches" in str(exc):
+                    raise
+                return {"found": False, "name": name}
+            obj_type, bodies = "occurrence", self._all_bodies(occ)
 
-        mn = [float("inf")] * 3
-        mx = [float("-inf")] * 3
-
-        def _extend(bodies):
-            for i in range(bodies.count):
-                bb = bodies.item(i).boundingBox
-                lo = [bb.minPoint.x, bb.minPoint.y, bb.minPoint.z]
-                hi = [bb.maxPoint.x, bb.maxPoint.y, bb.maxPoint.z]
-                for axis in range(3):
-                    if lo[axis] < mn[axis]:
-                        mn[axis] = lo[axis]
-                    if hi[axis] > mx[axis]:
-                        mx[axis] = hi[axis]
-
-        _extend(comp.bRepBodies)
-        for occ in comp.allOccurrences:
-            _extend(occ.bRepBodies)
-
-        if mn[0] == float("inf"):
-            return {"found": True, "type": "component", "name": name, "empty": True}
-
-        return _payload("component", mn, mx)
+        box = self._bbox_union(bodies)
+        if box is None:
+            return {"found": True, "type": obj_type, "name": name, "empty": True}
+        result = _payload(obj_type, *box)
+        if obj_type == "assembly":
+            # FTC size limits are in inches.
+            result["size_in"] = [round(s / 2.54, 3) for s in result["size"]]
+        return result
 
     # ------------------------------------------------------------------
     # Sketch
     # ------------------------------------------------------------------
 
-    def create_sketch(self, plane: str = "xy", z_offset: float = None):
-        root = self._root()
+    def create_sketch(
+        self, plane: str = "xy", z_offset: float = None, component: str = None
+    ):
+        comp = self._target_component(component)
 
         if z_offset is not None and z_offset != 0:
             # Create an offset construction plane
-            planes = root.constructionPlanes
+            planes = comp.constructionPlanes
             plane_input = planes.createInput()
             offset_val = adsk.core.ValueInput.createByReal(z_offset)
-            plane_input.setByOffset(self._construction_plane(plane), offset_val)
+            plane_input.setByOffset(self._construction_plane(plane, comp), offset_val)
             cp = planes.add(plane_input)
-            sketch = root.sketches.add(cp)
+            sketch = comp.sketches.add(cp)
         else:
-            sketch = root.sketches.add(self._construction_plane(plane))
+            sketch = comp.sketches.add(self._construction_plane(plane, comp))
+        self._last_sketch_obj = sketch
 
-        return {"sketch_name": sketch.name, "plane": plane, "z_offset": z_offset}
+        return {
+            "sketch_name": sketch.name,
+            "plane": plane,
+            "z_offset": z_offset,
+            "component": comp.name,
+        }
 
     def draw_rectangle(
         self,
@@ -943,13 +1102,13 @@ class CommandHandler:
         operation: str = "new_body",
         direction: str = "positive",
     ):
-        root = self._root()
         sketch = self._last_sketch()
         if sketch.profiles.count == 0:
             raise RuntimeError("No profiles in sketch")
         profile = sketch.profiles.item(profile_index)
 
-        ext_feats = root.features.extrudeFeatures
+        comp = sketch.parentComponent
+        ext_feats = comp.features.extrudeFeatures
         ext_input = ext_feats.createInput(profile, self._operation_type(operation))
         dist = adsk.core.ValueInput.createByReal(height)
         if direction == "symmetric":
@@ -963,6 +1122,7 @@ class CommandHandler:
             "height": height,
             "operation": operation,
             "direction": direction,
+            "component": comp.name,
         }
 
     def revolve(
@@ -977,11 +1137,11 @@ class CommandHandler:
         axis_direction_z: float = 0,
         operation: str = "new_body",
     ):
-        root = self._root()
         sketch = self._last_sketch()
         if sketch.profiles.count == 0:
             raise RuntimeError("No profiles in sketch")
         profile = sketch.profiles.item(profile_index)
+        comp = sketch.parentComponent
 
         # Determine axis entity first (required for createInput)
         axis_entity = None
@@ -989,11 +1149,11 @@ class CommandHandler:
         is_y = abs(axis_direction_y) > 0.99 and abs(axis_direction_x) < 0.01
         is_z = abs(axis_direction_z) > 0.99 and abs(axis_direction_x) < 0.01
         if is_x and abs(axis_direction_z) < 0.01:
-            axis_entity = root.xConstructionAxis
+            axis_entity = comp.xConstructionAxis
         elif is_y and abs(axis_direction_z) < 0.01:
-            axis_entity = root.yConstructionAxis
+            axis_entity = comp.yConstructionAxis
         elif is_z and abs(axis_direction_y) < 0.01:
-            axis_entity = root.zConstructionAxis
+            axis_entity = comp.zConstructionAxis
         else:
             # Create construction line in sketch
             origin = adsk.core.Point3D.create(
@@ -1008,7 +1168,7 @@ class CommandHandler:
             line.isConstruction = True
             axis_entity = line
 
-        rev_feats = root.features.revolveFeatures
+        rev_feats = comp.features.revolveFeatures
         rev_input = rev_feats.createInput(
             profile, axis_entity, self._operation_type(operation)
         )
@@ -1017,7 +1177,12 @@ class CommandHandler:
         rev_input.setAngleExtent(False, angle_val)
 
         feat = rev_feats.add(rev_input)
-        return {"feature_name": feat.name, "angle": angle, "operation": operation}
+        return {
+            "feature_name": feat.name,
+            "angle": angle,
+            "operation": operation,
+            "component": comp.name,
+        }
 
     def sweep(
         self,
@@ -1026,8 +1191,8 @@ class CommandHandler:
         path_curve_index: int = 0,
         operation: str = "new_body",
     ):
-        root = self._root()
         sketch = self._last_sketch()
+        comp = sketch.parentComponent
         path_sketch = self._sketch_by_name(path_sketch_name)
 
         if sketch.profiles.count == 0:
@@ -1037,22 +1202,26 @@ class CommandHandler:
         path_curves = list(path_sketch.sketchCurves)
         path_curve = path_curves[path_curve_index]
 
-        path = root.features.createPath(path_curve)
+        path = comp.features.createPath(path_curve)
 
-        sweep_feats = root.features.sweepFeatures
+        sweep_feats = comp.features.sweepFeatures
         sweep_input = sweep_feats.createInput(
             profile, path, self._operation_type(operation)
         )
         feat = sweep_feats.add(sweep_input)
-        return {"feature_name": feat.name, "operation": operation}
+        return {
+            "feature_name": feat.name,
+            "operation": operation,
+            "component": comp.name,
+        }
 
     def loft(self, profile_sketch_names: list, operation: str = "new_body"):
-        root = self._root()
-        loft_feats = root.features.loftFeatures
+        sketches = [self._sketch_by_name(n) for n in profile_sketch_names]
+        comp = sketches[0].parentComponent if sketches else self._root()
+        loft_feats = comp.features.loftFeatures
         loft_input = loft_feats.createInput(self._operation_type(operation))
 
-        for sketch_name in profile_sketch_names:
-            sketch = self._sketch_by_name(sketch_name)
+        for sketch_name, sketch in zip(profile_sketch_names, sketches):
             if sketch.profiles.count == 0:
                 raise RuntimeError(f"No profiles in sketch '{sketch_name}'")
             loft_input.loftSections.add(sketch.profiles.item(0))
@@ -1062,6 +1231,7 @@ class CommandHandler:
             "feature_name": feat.name,
             "operation": operation,
             "profile_count": len(profile_sketch_names),
+            "component": comp.name,
         }
 
     def fillet(
@@ -1072,20 +1242,25 @@ class CommandHandler:
         edge_selection: str = "all",
     ):
         root = self._root()
-        body = (
+        body, comp = self._native(
             self._body_by_name(body_name)
             if body_name
             else root.bRepBodies.item(body_index)
         )
         edges = self._select_edges(body, edge_selection)
 
-        fillets = root.features.filletFeatures
+        fillets = comp.features.filletFeatures
         inp = fillets.createInput()
         inp.addConstantRadiusEdgeSet(
             edges, adsk.core.ValueInput.createByReal(radius), True
         )
         feat = fillets.add(inp)
-        return {"feature_name": feat.name, "radius": radius, "edges_count": edges.count}
+        return {
+            "feature_name": feat.name,
+            "radius": radius,
+            "edges_count": edges.count,
+            "component": comp.name,
+        }
 
     def chamfer(
         self,
@@ -1095,14 +1270,14 @@ class CommandHandler:
         edge_selection: str = "all",
     ):
         root = self._root()
-        body = (
+        body, comp = self._native(
             self._body_by_name(body_name)
             if body_name
             else root.bRepBodies.item(body_index)
         )
         edges = self._select_edges(body, edge_selection)
 
-        chamfers = root.features.chamferFeatures
+        chamfers = comp.features.chamferFeatures
         inp = chamfers.createInput(edges, True)
         inp.setToEqualDistance(adsk.core.ValueInput.createByReal(distance))
         feat = chamfers.add(inp)
@@ -1110,6 +1285,7 @@ class CommandHandler:
             "feature_name": feat.name,
             "distance": distance,
             "edges_count": edges.count,
+            "component": comp.name,
         }
 
     def shell(
@@ -1120,7 +1296,7 @@ class CommandHandler:
         face_selection: str = "top",
     ):
         root = self._root()
-        body = (
+        body, comp = self._native(
             self._body_by_name(body_name)
             if body_name
             else root.bRepBodies.item(body_index)
@@ -1147,7 +1323,7 @@ class CommandHandler:
         if faces.count == 0:
             raise RuntimeError(f"No faces matched '{face_selection}'")
 
-        shells = root.features.shellFeatures
+        shells = comp.features.shellFeatures
         body_coll = adsk.core.ObjectCollection.create()
         body_coll.add(body)
         inp = shells.createInput(body_coll)
@@ -1158,11 +1334,12 @@ class CommandHandler:
             "feature_name": feat.name,
             "thickness": thickness,
             "faces_removed": faces.count,
+            "component": comp.name,
         }
 
     def mirror(self, mirror_plane: str, body_name: str = None, body_index: int = 0):
         root = self._root()
-        body = (
+        body, comp = self._native(
             self._body_by_name(body_name)
             if body_name
             else root.bRepBodies.item(body_index)
@@ -1171,10 +1348,16 @@ class CommandHandler:
         entities = adsk.core.ObjectCollection.create()
         entities.add(body)
 
-        mirrors = root.features.mirrorFeatures
-        inp = mirrors.createInput(entities, self._construction_plane(mirror_plane))
+        mirrors = comp.features.mirrorFeatures
+        inp = mirrors.createInput(
+            entities, self._construction_plane(mirror_plane, comp)
+        )
         feat = mirrors.add(inp)
-        return {"feature_name": feat.name, "mirror_plane": mirror_plane}
+        return {
+            "feature_name": feat.name,
+            "mirror_plane": mirror_plane,
+            "component": comp.name,
+        }
 
     def create_hole(
         self,
@@ -1187,7 +1370,7 @@ class CommandHandler:
         center_y: float = 0,
     ):
         root = self._root()
-        body = (
+        body, comp = self._native(
             self._body_by_name(body_name)
             if body_name
             else root.bRepBodies.item(body_index)
@@ -1233,7 +1416,7 @@ class CommandHandler:
         center_z = _hole_geom.plane_z_at(
             (n.x, n.y, n.z), (o.x, o.y, o.z), center_x, center_y
         )
-        sketch = root.sketches.add(target_face)
+        sketch = comp.sketches.add(target_face)
         sketch_pt = sketch.sketchPoints.add(
             sketch.modelToSketchSpace(
                 adsk.core.Point3D.create(center_x, center_y, center_z)
@@ -1242,7 +1425,7 @@ class CommandHandler:
 
         # createSimpleInput() takes the DIAMETER -- "A ValueInput object that
         # defines the diameter of the hole" -- not the radius.
-        holes = root.features.holeFeatures
+        holes = comp.features.holeFeatures
         hole_input = holes.createSimpleInput(
             adsk.core.ValueInput.createByReal(diameter)
         )
@@ -1261,6 +1444,7 @@ class CommandHandler:
             "cut_bodies": [b.name for b in feat.bodies],
             # Where the request resolved to, not a measurement of the feature.
             "resolved_center": [center_x, center_y, center_z],
+            "component": comp.name,
         }
 
     def rectangular_pattern(
@@ -1271,43 +1455,51 @@ class CommandHandler:
         y_count: int = 1,
         y_spacing: float = 1.0,
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
         bodies = adsk.core.ObjectCollection.create()
         bodies.add(body)
 
-        patterns = root.features.rectangularPatternFeatures
+        patterns = comp.features.rectangularPatternFeatures
         inp = patterns.createInput(
             bodies,
-            root.xConstructionAxis,
+            comp.xConstructionAxis,
             adsk.core.ValueInput.createByReal(x_count),
             adsk.core.ValueInput.createByReal(x_spacing),
             adsk.fusion.PatternDistanceType.SpacingPatternDistanceType,
         )
         inp.setDirectionTwo(
-            root.yConstructionAxis,
+            comp.yConstructionAxis,
             adsk.core.ValueInput.createByReal(y_count),
             adsk.core.ValueInput.createByReal(y_spacing),
         )
         feat = patterns.add(inp)
-        return {"feature_name": feat.name, "x_count": x_count, "y_count": y_count}
+        return {
+            "feature_name": feat.name,
+            "x_count": x_count,
+            "y_count": y_count,
+            "component": comp.name,
+        }
 
     def circular_pattern(
         self, body_name: str, count: int, axis: str = "z", total_angle: float = 360
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
         bodies = adsk.core.ObjectCollection.create()
         bodies.add(body)
 
-        patterns = root.features.circularPatternFeatures
-        inp = patterns.createInput(bodies, self._construction_axis(axis))
+        patterns = comp.features.circularPatternFeatures
+        inp = patterns.createInput(bodies, self._construction_axis(axis, comp))
         inp.quantity = adsk.core.ValueInput.createByReal(count)
         inp.totalAngle = adsk.core.ValueInput.createByString(f"{total_angle} deg")
         feat = patterns.add(inp)
-        return {"feature_name": feat.name, "count": count, "total_angle": total_angle}
+        return {
+            "feature_name": feat.name,
+            "count": count,
+            "total_angle": total_angle,
+            "component": comp.name,
+        }
 
     def create_thread(
         self,
@@ -1321,11 +1513,10 @@ class CommandHandler:
         is_full_length: bool = True,
         thread_length: float = None,
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
         face = body.faces.item(face_index)
 
-        threads = root.features.threadFeatures
+        threads = comp.features.threadFeatures
         thread_data = threads.threadDataQuery
         thread_data.threadType = thread_type
 
@@ -1336,7 +1527,11 @@ class CommandHandler:
             inp.threadLength = adsk.core.ValueInput.createByReal(thread_length)
 
         feat = threads.add(inp)
-        return {"feature_name": feat.name, "thread_type": thread_type}
+        return {
+            "feature_name": feat.name,
+            "thread_type": thread_type,
+            "component": comp.name,
+        }
 
     def draft_faces(
         self,
@@ -1346,21 +1541,25 @@ class CommandHandler:
         pull_direction_plane: str = "xy",
         is_tangent_chain: bool = True,
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
         faces = self._select_faces(body, face_selection)
 
-        drafts = root.features.draftFeatures
+        drafts = comp.features.draftFeatures
         # createInput wants a BRepFace array and three arguments; the angle is
         # set on the input object afterwards, not passed in.
         inp = drafts.createInput(
             [faces.item(i) for i in range(faces.count)],
-            self._construction_plane(pull_direction_plane),
+            self._construction_plane(pull_direction_plane, comp),
             is_tangent_chain,
         )
         inp.setSingleAngle(False, adsk.core.ValueInput.createByString(f"{angle} deg"))
         feat = drafts.add(inp)
-        return {"feature_name": feat.name, "angle": angle, "face_count": faces.count}
+        return {
+            "feature_name": feat.name,
+            "angle": angle,
+            "face_count": faces.count,
+            "component": comp.name,
+        }
 
     def split_body(
         self,
@@ -1369,19 +1568,22 @@ class CommandHandler:
         splitting_body: str = None,
         extend_tool: bool = True,
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
-        splits = root.features.splitBodyFeatures
+        splits = comp.features.splitBodyFeatures
         if splitting_body:
-            tool = self._body_by_name(splitting_body)
+            tool, _ = self._native(self._body_by_name(splitting_body))
             inp = splits.createInput(body, tool, extend_tool)
         else:
             inp = splits.createInput(
-                body, self._construction_plane(splitting_plane), extend_tool
+                body, self._construction_plane(splitting_plane, comp), extend_tool
             )
         feat = splits.add(inp)
-        return {"feature_name": feat.name, "splitting_plane": splitting_plane}
+        return {
+            "feature_name": feat.name,
+            "splitting_plane": splitting_plane,
+            "component": comp.name,
+        }
 
     def split_face(
         self,
@@ -1390,8 +1592,7 @@ class CommandHandler:
         splitting_plane: str = "xy",
         extend_tool: bool = True,
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
         faces = adsk.core.ObjectCollection.create()
         if face_indices:
@@ -1401,12 +1602,12 @@ class CommandHandler:
             for face in body.faces:
                 faces.add(face)
 
-        splits = root.features.splitFaceFeatures
+        splits = comp.features.splitFaceFeatures
         inp = splits.createInput(
-            faces, self._construction_plane(splitting_plane), extend_tool
+            faces, self._construction_plane(splitting_plane, comp), extend_tool
         )
         feat = splits.add(inp)
-        return {"feature_name": feat.name}
+        return {"feature_name": feat.name, "component": comp.name}
 
     def offset_faces(
         self,
@@ -1415,8 +1616,7 @@ class CommandHandler:
         face_selection: str = "top",
         face_indices: list = None,
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
         if face_indices:
             faces = adsk.core.ObjectCollection.create()
@@ -1425,14 +1625,14 @@ class CommandHandler:
         else:
             faces = self._select_faces(body, face_selection)
 
-        offsets = root.features.offsetFeatures
+        offsets = comp.features.offsetFeatures
         inp = offsets.createInput(
             faces,
             adsk.core.ValueInput.createByReal(distance),
             adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
         )
         feat = offsets.add(inp)
-        return {"feature_name": feat.name, "distance": distance}
+        return {"feature_name": feat.name, "distance": distance, "component": comp.name}
 
     def scale_body(
         self,
@@ -1445,15 +1645,14 @@ class CommandHandler:
         anchor_y: float = 0,
         anchor_z: float = 0,
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
         bodies = adsk.core.ObjectCollection.create()
         bodies.add(body)
 
         anchor = adsk.core.Point3D.create(anchor_x, anchor_y, anchor_z)
 
-        scales = root.features.scaleFeatures
+        scales = comp.features.scaleFeatures
         if scale_x is not None and scale_y is not None and scale_z is not None:
             inp = scales.createInput(
                 bodies,
@@ -1467,7 +1666,7 @@ class CommandHandler:
                 bodies, anchor, adsk.core.ValueInput.createByReal(scale)
             )
         feat = scales.add(inp)
-        return {"feature_name": feat.name, "scale": scale}
+        return {"feature_name": feat.name, "scale": scale, "component": comp.name}
 
     def suppress_feature(self, feature_name: str):
         design = self._design()
@@ -1500,10 +1699,9 @@ class CommandHandler:
         return {"renamed": True, "old_name": old_name, "new_name": new_name}
 
     def move_body(self, body_name: str, x: float = 0, y: float = 0, z: float = 0):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
-        move_feats = root.features.moveFeatures
+        move_feats = comp.features.moveFeatures
         bodies = adsk.core.ObjectCollection.create()
         bodies.add(body)
 
@@ -1512,7 +1710,12 @@ class CommandHandler:
 
         inp = move_feats.createInput(bodies, transform)
         feat = move_feats.add(inp)
-        return {"feature_name": feat.name, "body": body_name, "translation": [x, y, z]}
+        return {
+            "feature_name": feat.name,
+            "body": body_name,
+            "translation": [x, y, z],
+            "component": comp.name,
+        }
 
     def export_stl(self, body_name: str, file_path: str = None):
         body = self._body_by_name(body_name)
@@ -1905,11 +2108,18 @@ class CommandHandler:
     def boolean_operation(
         self, target_body: str, tool_body: str, operation: str = "join"
     ):
-        root = self._root()
         target = self._body_by_name(target_body)
         tool = self._body_by_name(tool_body)
+        native_target, comp = self._native(target)
+        native_tool, tool_comp = self._native(tool)
+        if tool_comp == comp:
+            target, tool = native_target, native_tool
+        else:
+            # Across components: proxies in root (Fusion files the feature
+            # under the target's component).
+            comp = self._root()
 
-        combine_feats = root.features.combineFeatures
+        combine_feats = comp.features.combineFeatures
         tool_coll = adsk.core.ObjectCollection.create()
         tool_coll.add(tool)
 
@@ -1932,6 +2142,7 @@ class CommandHandler:
             "operation": operation,
             "target": target_body,
             "tool": tool_body,
+            "component": feat.parentComponent.name,
         }
 
     def delete_all(self):
@@ -2120,8 +2331,9 @@ class CommandHandler:
         center_x: float = 0,
         center_y: float = 0,
         center_z: float = 0,
+        component: str = None,
     ):
-        root = self._root()
+        comp = self._target_component(component)
         temp_brep = adsk.fusion.TemporaryBRepManager.get()
 
         # Box orientation matrix
@@ -2135,12 +2347,18 @@ class CommandHandler:
         )
 
         box_body = temp_brep.createBox(orient)
-        base_feat = root.features.baseFeatures.add()
+        base_feat = comp.features.baseFeatures.add()
         base_feat.startEdit()
-        root.bRepBodies.add(box_body, base_feat)
+        comp.bRepBodies.add(box_body, base_feat)
         base_feat.finishEdit()
 
-        return {"created": True, "length": length, "width": width, "height": height}
+        return {
+            "created": True,
+            "length": length,
+            "width": width,
+            "height": height,
+            "component": comp.name,
+        }
 
     def create_box_parametric(
         self,
@@ -2164,7 +2382,7 @@ class CommandHandler:
             self._component_by_name(component_name) if component_name else self._root()
         )
 
-        base_plane = self._construction_plane(plane)
+        base_plane = self._construction_plane(plane, comp)
         if origin_z != 0:
             plane_input = comp.constructionPlanes.createInput()
             offset_val = adsk.core.ValueInput.createByReal(origin_z)
@@ -2250,8 +2468,9 @@ class CommandHandler:
         base_y: float = 0,
         base_z: float = 0,
         axis: str = "z",
+        component: str = None,
     ):
-        root = self._root()
+        comp = self._target_component(component)
         temp_brep = adsk.fusion.TemporaryBRepManager.get()
 
         base_pt = adsk.core.Point3D.create(base_x, base_y, base_z)
@@ -2264,12 +2483,17 @@ class CommandHandler:
 
         cyl_body = temp_brep.createCylinderOrCone(base_pt, radius, top_pt, radius)
 
-        base_feat = root.features.baseFeatures.add()
+        base_feat = comp.features.baseFeatures.add()
         base_feat.startEdit()
-        root.bRepBodies.add(cyl_body, base_feat)
+        comp.bRepBodies.add(cyl_body, base_feat)
         base_feat.finishEdit()
 
-        return {"created": True, "radius": radius, "height": height}
+        return {
+            "created": True,
+            "radius": radius,
+            "height": height,
+            "component": comp.name,
+        }
 
     def create_sphere(
         self,
@@ -2277,19 +2501,20 @@ class CommandHandler:
         center_x: float = 0,
         center_y: float = 0,
         center_z: float = 0,
+        component: str = None,
     ):
-        root = self._root()
+        comp = self._target_component(component)
         temp_brep = adsk.fusion.TemporaryBRepManager.get()
 
         center = adsk.core.Point3D.create(center_x, center_y, center_z)
         sphere_body = temp_brep.createSphere(center, radius)
 
-        base_feat = root.features.baseFeatures.add()
+        base_feat = comp.features.baseFeatures.add()
         base_feat.startEdit()
-        root.bRepBodies.add(sphere_body, base_feat)
+        comp.bRepBodies.add(sphere_body, base_feat)
         base_feat.finishEdit()
 
-        return {"created": True, "radius": radius}
+        return {"created": True, "radius": radius, "component": comp.name}
 
     def create_torus(
         self,
@@ -2299,8 +2524,9 @@ class CommandHandler:
         center_y: float = 0,
         center_z: float = 0,
         axis: str = "z",
+        component: str = None,
     ):
-        root = self._root()
+        comp = self._target_component(component)
         temp_brep = adsk.fusion.TemporaryBRepManager.get()
 
         center = adsk.core.Point3D.create(center_x, center_y, center_z)
@@ -2311,15 +2537,16 @@ class CommandHandler:
             center, axis_vector, major_radius, minor_radius
         )
 
-        base_feat = root.features.baseFeatures.add()
+        base_feat = comp.features.baseFeatures.add()
         base_feat.startEdit()
-        root.bRepBodies.add(torus_body, base_feat)
+        comp.bRepBodies.add(torus_body, base_feat)
         base_feat.finishEdit()
 
         return {
             "created": True,
             "major_radius": major_radius,
             "minor_radius": minor_radius,
+            "component": comp.name,
         }
 
     # ------------------------------------------------------------------
@@ -2469,91 +2696,1075 @@ class CommandHandler:
     # ------------------------------------------------------------------
 
     def create_component(self, name: str, parent_name: str = None):
-        root = self._root()
-        parent = self._component_by_name(parent_name) if parent_name else root
+        parent_occ = self._occurrence(parent_name) if parent_name else None
+        parent = parent_occ.component if parent_occ else self._root()
 
         occ = parent.occurrences.addNewComponent(adsk.core.Matrix3D.create())
         occ.component.name = name
-        return {"created": True, "name": name}
+        if parent_occ is not None:
+            occ = occ.createForAssemblyContext(parent_occ)
+        # Fusion makes component names unique ("Part" -> "Part (1)"), so
+        # report what it actually used.
+        return {"created": True, "name": occ.component.name, **self._occ_info(occ)}
+
+    _JOINT_MOTIONS = {
+        "rigid": lambda inp, d: inp.setAsRigidJointMotion(),
+        "revolute": lambda inp, d: inp.setAsRevoluteJointMotion(d.ZAxisJointDirection),
+        "slider": lambda inp, d: inp.setAsSliderJointMotion(d.ZAxisJointDirection),
+        "cylindrical": lambda inp, d: inp.setAsCylindricalJointMotion(
+            d.ZAxisJointDirection
+        ),
+        "pin_slot": lambda inp, d: inp.setAsPinSlotJointMotion(
+            d.ZAxisJointDirection, d.XAxisJointDirection
+        ),
+        "planar": lambda inp, d: inp.setAsPlanarJointMotion(d.ZAxisJointDirection),
+        "ball": lambda inp, d: inp.setAsBallJointMotion(
+            d.ZAxisJointDirection, d.XAxisJointDirection
+        ),
+    }
+
+    def _set_joint_motion(self, inp, joint_type: str):
+        """Motion about the joint's Z axis (a hole's axis, a face's normal)."""
+        setter = self._JOINT_MOTIONS.get(joint_type)
+        if setter is None:
+            raise RuntimeError(
+                f"Unknown joint type: {joint_type} — use one of "
+                f"{', '.join(self._JOINT_MOTIONS)}"
+            )
+        setter(inp, adsk.fusion.JointDirections)
+
+    def _joint_geometry(self, spec: dict):
+        """(JointGeometry, occurrence) for {"ref": ..., "keypoint": ...}.
+
+        Planar faces default to their center, other faces (holes, shafts)
+        to their start end, edges to their center.
+        """
+        kp_types = adsk.fusion.JointKeyPointTypes
+        keypoints = {
+            "start": kp_types.StartKeyPoint,
+            "end": kp_types.EndKeyPoint,
+            "middle": kp_types.MiddleKeyPoint,
+            "center": kp_types.CenterKeyPoint,
+        }
+        entity = self._resolve_ref(spec["ref"])
+        occ = entity.assemblyContext
+        if occ is None:
+            raise RuntimeError(
+                f"Ref '{spec['ref']}' is a root-component body — joints need "
+                "geometry on an occurrence"
+            )
+        kp = spec.get("keypoint")
+        if kp is not None and kp not in keypoints:
+            raise RuntimeError(
+                f"Unknown keypoint '{kp}' — use start, end, middle or center"
+            )
+        jg = adsk.fusion.JointGeometry
+        if isinstance(entity, adsk.fusion.BRepEdge):
+            return jg.createByCurve(entity, keypoints[kp or "center"]), occ
+        if entity.geometry.surfaceType == adsk.core.SurfaceTypes.PlaneSurfaceType:
+            return jg.createByPlanarFace(entity, None, keypoints[kp or "center"]), occ
+        return jg.createByNonPlanarFace(entity, keypoints[kp or "start"]), occ
+
+    @staticmethod
+    def _release_from_parent(occ):
+        """Clear isGroundToParent, which is True by default and stops joints
+        between copies of one component from solving ("conflicts with
+        assembly relationships")."""
+        if occ.assemblyContext is None and occ.isGroundToParent:
+            occ.isGroundToParent = False
+
+    @staticmethod
+    def _joint_health(joint) -> dict:
+        """A joint that can't solve is still created; Fusion only flags it."""
+        tl = joint.timelineObject
+        if tl is None:
+            return {"health": "ok"}
+        names = {0: "ok", 1: "warning", 2: "error"}
+        result = {"health": names.get(tl.healthState, str(tl.healthState))}
+        if tl.healthState != 0:
+            result["warning"] = (tl.errorOrWarningMessage or "").split("\n")[0][:200]
+        return result
 
     def add_joint(
-        self, component_one: str, component_two: str, joint_type: str = "rigid"
+        self,
+        component_one: str = None,
+        component_two: str = None,
+        joint_type: str = "rigid",
+        geometry_one: dict = None,
+        geometry_two: dict = None,
+        offset: float = 0,
+        angle: float = 0,
+        flip: bool = False,
     ):
+        """Joint occurrence one onto two (one moves).  Each side is a face or
+        edge ref + keypoint, or else the occurrence's origin."""
+        sides = []
+        for name, spec in (
+            (component_one, geometry_one),
+            (component_two, geometry_two),
+        ):
+            if spec:
+                sides.append(self._joint_geometry(spec))
+            elif name:
+                occ = self._occurrence(name)
+                origin = occ.component.originConstructionPoint
+                point = origin.createForAssemblyContext(occ)
+                sides.append((adsk.fusion.JointGeometry.createByPoint(point), occ))
+            else:
+                raise RuntimeError(
+                    "Each side needs component_one/two (origin) or "
+                    "geometry_one/two ({ref, keypoint})"
+                )
+        (geo1, occ1), (geo2, occ2) = sides
+        for occ in (occ1, occ2):
+            self._release_from_parent(occ)
+
         root = self._root()
+        inp = root.joints.createInput(geo1, geo2)
+        self._set_joint_motion(inp, joint_type)
+        if offset:
+            inp.offset = adsk.core.ValueInput.createByReal(offset)
+        if angle:
+            inp.angle = adsk.core.ValueInput.createByString(f"{angle} deg")
+        inp.isFlipped = bool(flip)
+        joint = root.joints.add(inp)
 
-        occ1 = occ2 = None
-        for occ in root.allOccurrences:
-            if occ.component.name == component_one:
-                occ1 = occ
-            if occ.component.name == component_two:
-                occ2 = occ
-
-        if not occ1 or not occ2:
-            raise RuntimeError("One or both components not found")
-
-        joints = root.joints
-        joint_types = {
-            "rigid": adsk.fusion.JointTypes.RigidJointType,
-            "revolute": adsk.fusion.JointTypes.RevoluteJointType,
-            "slider": adsk.fusion.JointTypes.SliderJointType,
-            "cylindrical": adsk.fusion.JointTypes.CylindricalJointType,
-            "pin_slot": adsk.fusion.JointTypes.PinSlotJointType,
-            "planar": adsk.fusion.JointTypes.PlanarJointType,
-            "ball": adsk.fusion.JointTypes.BallJointType,
+        box = self._bbox_union(self._all_bodies(occ1))
+        return {
+            "created": True,
+            "joint_name": joint.name,
+            "joint_type": joint_type,
+            "occurrence_one": occ1.fullPathName,
+            "occurrence_two": occ2.fullPathName,
+            **self._joint_health(joint),
+            "moved_bbox": {"min": box[0], "max": box[1]} if box else None,
         }
 
-        jt = joint_types.get(joint_type)
-        if jt is None:
-            raise RuntimeError(f"Unknown joint type: {joint_type}")
-
-        # Create joint geometry from origin points
-        origin1 = occ1.component.originConstructionPoint
-        origin2 = occ2.component.originConstructionPoint
-        geo1 = adsk.fusion.JointGeometry.createByPoint(occ1, origin1)
-        geo2 = adsk.fusion.JointGeometry.createByPoint(occ2, origin2)
-
-        inp = joints.createInput(geo1, geo2)
-        if joint_type == "rigid":
-            inp.setAsRigidJointMotion()
-        joints.add(inp)
-        return {"created": True, "joint_type": joint_type}
-
     def create_as_built_joint(
-        self, component_one: str, component_two: str, joint_type: str = "rigid"
+        self,
+        component_one: str,
+        component_two: str,
+        joint_type: str = "rigid",
+        geometry: dict = None,
     ):
         root = self._root()
+        occ1 = self._occurrence(component_one)
+        occ2 = self._occurrence(component_two)
+        geo = None
+        if geometry:
+            geo, _ = self._joint_geometry(geometry)
+        elif joint_type != "rigid":
+            raise RuntimeError(
+                f"A {joint_type} as-built joint needs 'geometry' "
+                "({ref, keypoint}) to define its axis"
+            )
+        for occ in (occ1, occ2):
+            self._release_from_parent(occ)
 
-        occ1 = occ2 = None
-        for occ in root.allOccurrences:
-            if occ.component.name == component_one:
-                occ1 = occ
-            if occ.component.name == component_two:
-                occ2 = occ
-
-        if not occ1 or not occ2:
-            raise RuntimeError("One or both components not found")
-
-        as_built = root.asBuiltJoints
-        inp = as_built.createInput(occ1, occ2, None)
-        as_built.add(inp)
-        return {"created": True, "joint_type": joint_type}
+        inp = root.asBuiltJoints.createInput(occ1, occ2, geo)
+        self._set_joint_motion(inp, joint_type)
+        joint = root.asBuiltJoints.add(inp)
+        return {
+            "created": True,
+            "joint_name": joint.name,
+            "joint_type": joint_type,
+            "occurrence_one": occ1.fullPathName,
+            "occurrence_two": occ2.fullPathName,
+            **self._joint_health(joint),
+        }
 
     def create_rigid_group(self, component_names: list, include_children: bool = True):
         root = self._root()
         occs = adsk.core.ObjectCollection.create()
-
+        names = []
         for name in component_names:
-            for occ in root.allOccurrences:
-                if occ.component.name == name:
-                    occs.add(occ)
-                    break
+            occ = self._occurrence(name)
+            occs.add(occ)
+            names.append(occ.fullPathName)
 
         if occs.count < 2:
             raise RuntimeError("Need at least 2 components for rigid group")
 
-        groups = root.rigidGroups
-        groups.add(occs, include_children)
-        return {"created": True, "component_count": occs.count}
+        group = root.rigidGroups.add(occs, include_children)
+        return {
+            "created": True,
+            "rigid_group_name": group.name,
+            "component_count": occs.count,
+            "occurrences": names,
+        }
+
+    def _faces_with_refs(self, occ):
+        """Yield (ref, face proxy) for *occ* and every occurrence under it."""
+        prefix = occ.fullPathName + "+"
+        occs = [occ] + [
+            o for o in self._root().allOccurrences if o.fullPathName.startswith(prefix)
+        ]
+        for o in occs:
+            for bi in range(o.bRepBodies.count):
+                faces = o.bRepBodies.item(bi).faces
+                for fi in range(faces.count):
+                    yield (
+                        _occ_refs.make_ref(o.fullPathName, bi, "face", fi),
+                        faces.item(fi),
+                    )
+
+    @staticmethod
+    def _r(values, nd: int = 4) -> list:
+        return [round(v, nd) for v in values]
+
+    def find_holes(
+        self,
+        occurrence: str,
+        diameter: float = None,
+        tolerance: float = 0.01,
+        near: list = None,
+        limit: int = 50,
+    ):
+        """Concave cylindrical faces of an occurrence, in assembly coordinates.
+
+        start/end are the exact points add_joint's start/end keypoints use.
+        """
+        occ = self._occurrence(occurrence)
+        jg = adsk.fusion.JointGeometry
+        kp = adsk.fusion.JointKeyPointTypes
+        cyl = adsk.core.SurfaceTypes.CylinderSurfaceType
+        rows, seen, by_d = [], set(), {}
+        for ref, face in self._faces_with_refs(occ):
+            g = face.geometry
+            if g.surfaceType != cyl:
+                continue
+            p = face.pointOnFace
+            _, n = face.evaluator.getNormalAtPoint(p)
+            if not _hole_geom.is_concave_cylinder(
+                (n.x, n.y, n.z),
+                (p.x, p.y, p.z),
+                (g.origin.x, g.origin.y, g.origin.z),
+                (g.axis.x, g.axis.y, g.axis.z),
+            ):
+                continue
+            d = round(2 * g.radius, 4)
+            if diameter is not None and abs(d - diameter) > tolerance:
+                continue
+            s = jg.createByNonPlanarFace(face, kp.StartKeyPoint).origin
+            e = jg.createByNonPlanarFace(face, kp.EndKeyPoint).origin
+            start, end = self._r((s.x, s.y, s.z)), self._r((e.x, e.y, e.z))
+            # A hole split into two half-faces shows up twice.
+            key = (d, tuple(start), tuple(end))
+            if key in seen:
+                continue
+            seen.add(key)
+            length = max(sum((end[i] - start[i]) ** 2 for i in range(3)) ** 0.5, 1e-9)
+            rows.append(
+                {
+                    "ref": ref,
+                    "d": d,
+                    "start": start,
+                    "end": end,
+                    "axis": self._r([(end[i] - start[i]) / length for i in range(3)]),
+                    "length": round(length, 4),
+                }
+            )
+            by_d[d] = by_d.get(d, 0) + 1
+
+        rows = _hole_geom.sort_near(rows, near, "start")
+        return {
+            "occurrence": occ.fullPathName,
+            "count": len(rows),
+            "by_diameter": {str(k): v for k, v in sorted(by_d.items())},
+            "holes": rows[:limit],
+            "truncated": len(rows) > limit,
+        }
+
+    def list_faces(
+        self,
+        occurrence: str,
+        type: str = "planar",
+        near: list = None,
+        limit: int = 50,
+    ):
+        """Planar and/or cylindrical faces with refs, in assembly coordinates.
+
+        Planar faces are largest-first unless *near* is given.
+        """
+        if type not in ("planar", "cylindrical", "all"):
+            raise RuntimeError("type must be planar, cylindrical or all")
+        occ = self._occurrence(occurrence)
+        st = adsk.core.SurfaceTypes
+        rows = []
+        for ref, face in self._faces_with_refs(occ):
+            g = face.geometry
+            p = face.pointOnFace
+            if g.surfaceType == st.PlaneSurfaceType and type in ("planar", "all"):
+                _, n = face.evaluator.getNormalAtPoint(p)
+                c = face.centroid
+                rows.append(
+                    {
+                        "ref": ref,
+                        "type": "planar",
+                        "normal": self._r((n.x, n.y, n.z)),
+                        "center": self._r((c.x, c.y, c.z)),
+                        "area": round(face.area, 4),
+                    }
+                )
+            elif g.surfaceType == st.CylinderSurfaceType and type in (
+                "cylindrical",
+                "all",
+            ):
+                _, n = face.evaluator.getNormalAtPoint(p)
+                o = g.origin
+                rows.append(
+                    {
+                        "ref": ref,
+                        "type": "cylindrical",
+                        "d": round(2 * g.radius, 4),
+                        "axis": self._r((g.axis.x, g.axis.y, g.axis.z)),
+                        "center": self._r((o.x, o.y, o.z)),
+                        "concave": _hole_geom.is_concave_cylinder(
+                            (n.x, n.y, n.z),
+                            (p.x, p.y, p.z),
+                            (o.x, o.y, o.z),
+                            (g.axis.x, g.axis.y, g.axis.z),
+                        ),
+                        "area": round(face.area, 4),
+                    }
+                )
+        if near is None:
+            rows.sort(key=lambda r: -r["area"])
+        else:
+            rows = _hole_geom.sort_near(rows, near, "center")
+        return {
+            "occurrence": occ.fullPathName,
+            "count": len(rows),
+            "faces": rows[:limit],
+            "truncated": len(rows) > limit,
+        }
+
+    def ground_occurrence(self, occurrence: str, grounded: bool = True):
+        occ = self._occurrence(occurrence)
+        occ.isGrounded = bool(grounded)
+        return {**self._occ_info(occ), "grounded": occ.isGrounded}
+
+    def _joint_by_name(self, name: str):
+        """Joint or as-built joint anywhere in the design, by name."""
+        root = self._root()
+        joints = list(root.allJoints) + list(root.allAsBuiltJoints)
+        found = [j for j in joints if j.name == name]
+        if not found:  # "revolute1" finds Fusion's "Revolute 1"
+            key = name.replace(" ", "").lower()
+            found = [j for j in joints if j.name.replace(" ", "").lower() == key]
+        if len(found) == 1:
+            return found[0]
+        if found:
+            raise RuntimeError(
+                f"{len(found)} joints are named '{name}' (in different "
+                "components) — rename one"
+            )
+        names = [j.name for j in joints]
+        listed = ", ".join(names[:8]) + (", …" if len(names) > 8 else "")
+        raise RuntimeError(f"Joint '{name}' not found. Joints: {listed or 'none'}")
+
+    @staticmethod
+    def _dof_axis(motion, prefix: str):
+        """JointDirections value a degree of freedom moves along/about."""
+        if prefix == "slide" and hasattr(motion, "slideDirection"):
+            return motion.slideDirection
+        return motion.rotationAxis  # cylindrical slides along its rotation axis
+
+    def set_joint_value(
+        self,
+        joint: str,
+        value: float = None,
+        value2: float = None,
+        limits: dict = None,
+        limits2: dict = None,
+        persist: bool = False,
+    ):
+        """Drive a joint: rotation in degrees, slide in cm.
+
+        Temporary (default): the joint's motion value, like dragging it.
+        Fusion resets it to 0 on the next recompute (any modeling call).
+        persist=True writes the joint's angle/offset parameters instead,
+        which survive recompute; motion values and limits then count from
+        that new zero.
+        """
+        j = self._joint_by_name(joint)
+        m = j.jointMotion
+        jtype = _joint_vals.joint_type_name(m.jointType)
+        steps = _joint_vals.plan(jtype, value, value2, limits, limits2)
+        z_axis = adsk.fusion.JointDirections.ZAxisJointDirection
+        is_as_built = j.objectType == adsk.fusion.AsBuiltJoint.classType()
+
+        # Limits first: editing a limit resets the motion value to 0.
+        for prefix, unit, _, lim in steps:
+            if lim is None:
+                continue
+            jl = getattr(m, prefix + "Limits")
+            for stem, enabled, v in _joint_vals.limit_updates(lim, unit):
+                setattr(jl, f"is{stem}ValueEnabled", enabled)
+                if enabled:
+                    setattr(jl, f"{stem[0].lower()}{stem[1:]}Value", v)
+
+        warnings = []
+        for prefix, unit, v, _ in steps:
+            if v is None:
+                continue
+            if persist:
+                if is_as_built:
+                    raise RuntimeError(
+                        "As-built joints have no angle/offset to persist — "
+                        "use persist=false, or rebuild it with add_joint"
+                    )
+                if self._dof_axis(m, prefix) != z_axis:
+                    raise RuntimeError(
+                        f"Can't persist the {prefix} of '{j.name}': it isn't "
+                        "along the joint's Z axis — use persist=false"
+                    )
+                param = j.angle if prefix == "rotation" else j.offset
+                param.value = _joint_vals.to_api(v, unit)
+                setattr(m, prefix + "Value", 0.0)
+            else:
+                setattr(m, prefix + "Value", _joint_vals.to_api(v, unit))
+                got = _joint_vals.from_api(getattr(m, prefix + "Value"), unit)
+                if abs(got - v) > 1e-3:
+                    warnings.append(
+                        f"{prefix} {v} {unit} rejected (outside limits?); "
+                        f"it stays at {got} {unit}"
+                    )
+
+        # Report every degree of freedom: motion value, plus the persistent
+        # angle/offset when it acts along the same axis.
+        values, limits_out = {}, {}
+        for prefix, unit in _joint_vals.DOFS[jtype]:
+            motion_v = getattr(m, prefix + "Value")
+            base = 0.0
+            if not is_as_built and self._dof_axis(m, prefix) == z_axis:
+                param = j.angle if prefix == "rotation" else j.offset
+                base = param.value if param is not None else 0.0
+            values[f"{prefix}_{unit}"] = _joint_vals.from_api(base + motion_v, unit)
+            jl = getattr(m, prefix + "Limits")
+            lim = _joint_vals.limits_dict(
+                {
+                    "min": jl.isMinimumValueEnabled,
+                    "max": jl.isMaximumValueEnabled,
+                    "rest": jl.isRestValueEnabled,
+                },
+                {
+                    "min": jl.minimumValue,
+                    "max": jl.maximumValue,
+                    "rest": jl.restValue,
+                },
+                unit,
+            )
+            if lim:
+                limits_out[prefix] = lim
+
+        occ1 = j.occurrenceOne
+        box = self._bbox_union(self._all_bodies(occ1)) if occ1 else None
+        result = {
+            "joint": j.name,
+            "type": jtype,
+            "occurrence_one": occ1.fullPathName if occ1 else None,
+            "occurrence_two": j.occurrenceTwo.fullPathName if j.occurrenceTwo else None,
+            "values": values,
+            "persisted": bool(persist),
+            **self._joint_health(j),
+            "moved_bbox": {"min": box[0], "max": box[1]} if box else None,
+        }
+        if limits_out:
+            result["limits"] = limits_out
+        if warnings:
+            result["warnings"] = warnings
+        return result
+
+    def get_timeline(self, offset: int = 0, limit: int = 100, errors_only=False):
+        """Compact timeline rows; collapsed groups are one row."""
+        tl = self._design().timeline
+
+        def raw(t, i):
+            ent = t.entity
+            return _tl_rows.row(
+                i,
+                t.name,
+                ent.objectType if ent is not None else None,
+                t.isSuppressed,
+                t.healthState,
+                t.errorOrWarningMessage if t.healthState in (1, 2) else None,
+            )
+
+        rows = []
+        for i in range(tl.count):
+            t = tl.item(i)
+            if t.isGroup:
+                g = adsk.fusion.TimelineGroup.cast(t)
+                kids = []
+                for k in range(g.count):
+                    kid = raw(g.item(k), i)
+                    kid["k"] = k
+                    kids.append(kid)
+                rows.append(_tl_rows.group_row(i, t.name, t.isSuppressed, kids))
+            else:
+                rows.append(raw(t, i))
+
+        selected, matching = _tl_rows.page(rows, offset, limit, errors_only)
+        return {
+            "count": tl.count,
+            "marker_position": tl.markerPosition,
+            "problems": sum(1 for r in rows if _tl_rows.is_problem(r)),
+            "items": selected,
+            "truncated": offset + len(selected) < matching,
+        }
+
+    @staticmethod
+    def _placement(translation=None, axis=None, angle: float = 0):
+        """Matrix: rotate *angle* deg about *axis* through the origin, then
+        translate (cm)."""
+        m = adsk.core.Matrix3D.create()
+        if angle:
+            ax = adsk.core.Vector3D.create(*(axis or [0, 0, 1]))
+            m.setToRotation(math.radians(angle), ax, adsk.core.Point3D.create(0, 0, 0))
+        if translation:
+            m.translation = adsk.core.Vector3D.create(*translation)
+        return m
+
+    @staticmethod
+    def _transform_dict(m) -> dict:
+        t = m.translation
+        return {"translation": [round(t.x, 6), round(t.y, 6), round(t.z, 6)]}
+
+    def _attached(self, occ) -> list:
+        """Joint / rigid-group names that reference *occ* or anything under it."""
+        root = self._root()
+        path = occ.fullPathName
+
+        def _hits(o):
+            if o is None:
+                return False
+            p = o.fullPathName
+            return p == path or p.startswith(path + "+")
+
+        names = []
+        for j in list(root.allJoints) + list(root.allAsBuiltJoints):
+            if _hits(j.occurrenceOne) or _hits(j.occurrenceTwo):
+                names.append(j.name)
+        for g in root.allRigidGroups:
+            if any(_hits(o) for o in g.occurrences):
+                names.append(g.name)
+        return names
+
+    def _parametric(self) -> bool:
+        return self._design().designType == adsk.fusion.DesignTypes.ParametricDesignType
+
+    def _add_existing(self, parent_comp, comp, matrix):
+        """New occurrence of *comp* at *matrix* (native, in *parent_comp*)."""
+        occ = parent_comp.occurrences.addExistingComponent(comp, matrix)
+        if not self._parametric():
+            # Direct designs compose *matrix* with the first occurrence's
+            # transform; set it explicitly.
+            occ.transform2 = matrix
+        return occ
+
+    def _place(self, occ, matrix):
+        """Give *occ* a lasting transform; returns the (possibly new) occurrence.
+
+        Parametric designs reset Occurrence.transform2 on the next recompute
+        (design.snapshots.add() resets it too), so there the occurrence is
+        re-inserted at *matrix* and the old one deleted.  That renumbers the
+        occurrence (Plate:1 -> Plate:2) and would drop joints, so callers
+        check _attached() first.
+        """
+        native = occ.nativeObject or occ
+        if not self._parametric():
+            native.transform2 = matrix
+            return occ
+
+        parent_ctx = occ.assemblyContext
+        if parent_ctx is None:
+            grounded = native.isGrounded
+            new = self._root().occurrences.addExistingComponent(
+                native.component, matrix
+            )
+            native.deleteMe()
+            new.isGrounded = grounded
+            return new
+        # isGrounded is unavailable on sub-component occurrences.
+        new = parent_ctx.component.occurrences.addExistingComponent(
+            native.component, matrix
+        )
+        native.deleteMe()
+        return new.createForAssemblyContext(parent_ctx)
+
+    def move_occurrence(
+        self,
+        occurrence: str,
+        translation: list = None,
+        axis: list = None,
+        angle: float = 0,
+        relative: bool = False,
+    ):
+        occ = self._occurrence(occurrence)
+        attached = self._attached(occ)
+        if attached:
+            raise RuntimeError(
+                f"Occurrence '{occ.fullPathName}' is held by "
+                f"{', '.join(attached)} — joints position it; delete or "
+                "edit those instead of moving it"
+            )
+
+        native = occ.nativeObject or occ
+        if relative:
+            # Rotate about the occurrence's own origin, then shift.
+            m = native.transform2.copy()
+            if angle:
+                rot = adsk.core.Matrix3D.create()
+                rot.setToRotation(
+                    math.radians(angle),
+                    adsk.core.Vector3D.create(*(axis or [0, 0, 1])),
+                    m.translation.asPoint(),
+                )
+                m.transformBy(rot)
+            if translation:
+                m.transformBy(self._placement(translation))
+        else:
+            m = self._placement(translation, axis, angle)
+
+        previous = occ.fullPathName
+        occ = self._place(occ, m)
+        box = self._bbox_union(self._all_bodies(occ))
+        return {
+            **self._occ_info(occ),
+            "previous_occurrence": previous,
+            **self._transform_dict((occ.nativeObject or occ).transform2),
+            "bbox": {"min": box[0], "max": box[1]} if box else None,
+        }
+
+    _IMPORT_SOURCE_ATTR = ("fusion360mcp", "source")
+
+    def insert_part(
+        self,
+        file_path: str,
+        name: str = None,
+        parent: str = None,
+        translation: list = None,
+        axis: list = None,
+        angle: float = 0,
+    ):
+        """Insert a STEP/f3d file as an occurrence; reuse it if already imported."""
+        path = os.path.abspath(os.path.expanduser(file_path))
+        ext = os.path.splitext(path)[1].lower()
+        if ext not in (".step", ".stp", ".f3d"):
+            raise RuntimeError(
+                f"Unsupported file type '{ext}' — insert_part takes .step, "
+                ".stp or .f3d (use import_mesh for STL/OBJ/3MF)"
+            )
+        if not os.path.exists(path):
+            raise RuntimeError(f"File not found: {path}")
+
+        design = self._design()
+        parent_occ = self._occurrence(parent) if parent else None
+        parent_comp = parent_occ.component if parent_occ else self._root()
+        matrix = self._placement(translation, axis, angle)
+
+        group, attr_name = self._IMPORT_SOURCE_ATTR
+        comp = None
+        for c in design.allComponents:
+            attr = c.attributes.itemByName(group, attr_name)
+            if attr is not None and attr.value == path:
+                comp = c
+                break
+
+        if comp is not None:
+            occ = self._add_existing(parent_comp, comp, matrix)
+            reused = True
+        else:
+            im = self.app.importManager
+            opts = (
+                im.createFusionArchiveImportOptions(path)
+                if ext == ".f3d"
+                else im.createSTEPImportOptions(path)
+            )
+            imported = im.importToTarget2(opts, parent_comp)
+            if imported is None or imported.count == 0:
+                raise RuntimeError(f"Import produced no occurrence: {path}")
+            occ = imported.item(0)
+            comp = occ.component
+            stem = os.path.splitext(os.path.basename(path))[0]
+            # Fusion-exported STEP files come in as "(Unsaved) (n)".
+            if name:
+                comp.name = name
+            elif comp.name.startswith("(Unsaved)"):
+                comp.name = stem
+            comp.partNumber = stem
+            comp.attributes.add(group, attr_name, path)
+            reused = False
+
+        # importToTarget2 already returns a proxy in the parent's context.
+        if parent_occ is not None and occ.assemblyContext is None:
+            occ = occ.createForAssemblyContext(parent_occ)
+        # An import always lands at identity; reuse was placed on insert.
+        if not reused and not matrix.isEqualTo(adsk.core.Matrix3D.create()):
+            occ = self._place(occ, matrix)
+
+        box = self._bbox_union(self._all_bodies(occ))
+        return {
+            **self._occ_info(occ),
+            "reused": reused,
+            "part_number": comp.partNumber,
+            "bodies": comp.bRepBodies.count,
+            "child_occurrences": occ.childOccurrences.count,
+            "bbox": {"min": box[0], "max": box[1]} if box else None,
+        }
+
+    # Interference below this (cm³) is meshing noise, not a real overlap.
+    _INTERFERENCE_EPS = 1e-5
+
+    def _hole_face(self, ref: str, occ):
+        """Cylindrical face for *ref*, checked to belong to *occ*."""
+        face = self._resolve_ref(ref)
+        if not isinstance(face, adsk.fusion.BRepFace) or (
+            face.geometry.surfaceType != adsk.core.SurfaceTypes.CylinderSurfaceType
+        ):
+            raise RuntimeError(f"'{ref}' is not a hole — use a ref from find_holes")
+        ctx = face.assemblyContext
+        path = occ.fullPathName
+        if ctx is None or not (
+            ctx.fullPathName == path or ctx.fullPathName.startswith(path + "+")
+        ):
+            raise RuntimeError(f"Hole '{ref}' is not on occurrence '{path}'")
+        return face
+
+    @staticmethod
+    def _hole_ends(face):
+        """(start, end) keypoints of a hole face in assembly coordinates."""
+        jg, kp = adsk.fusion.JointGeometry, adsk.fusion.JointKeyPointTypes
+        s = jg.createByNonPlanarFace(face, kp.StartKeyPoint).origin
+        e = jg.createByNonPlanarFace(face, kp.EndKeyPoint).origin
+        return (s.x, s.y, s.z), (e.x, e.y, e.z)
+
+    def _pair_interference(self, occ_a, occ_b) -> float:
+        """Total overlap volume (cm³) between two occurrences' bodies."""
+        bodies = adsk.core.ObjectCollection.create()
+        paths_a = set()
+        for b in self._all_bodies(occ_a):
+            bodies.add(b)
+            paths_a.add(b.assemblyContext.fullPathName)
+        for b in self._all_bodies(occ_b):
+            bodies.add(b)
+        if bodies.count < 2:
+            return 0.0
+        design = self._design()
+        inp = design.createInterferenceInput(bodies)
+        inp.areCoincidentFacesIncluded = False
+        results = design.analyzeInterference(inp)
+        total = 0.0
+        for i in range(results.count if results is not None else 0):
+            r = results.item(i)
+            # Skip overlaps inside one part (two bodies of a multi-body STEP).
+            sides = {
+                (e.assemblyContext.fullPathName in paths_a)
+                for e in (r.entityOne, r.entityTwo)
+                if e.assemblyContext is not None
+            }
+            if len(sides) == 1:
+                continue
+            total += r.interferenceBody.volume
+        return total
+
+    def join_on_holes(
+        self,
+        occ_a: str,
+        hole_a: str,
+        occ_b: str,
+        hole_b: str,
+        rotation: float = 0,
+        joint_type: str = "rigid",
+        flip: bool = False,
+        offset: float = 0,
+    ):
+        """Bolt occ_a (moves) to occ_b (fixed) hole-to-hole, outside occ_b."""
+        mover = self._occurrence(occ_a)
+        fixed = self._occurrence(occ_b)
+        if mover.fullPathName == fixed.fullPathName:
+            raise RuntimeError("occ_a and occ_b are the same occurrence")
+        face_a = self._hole_face(hole_a, mover)
+        face_b = self._hole_face(hole_b, fixed)
+        mover_box = self._bbox_union(self._all_bodies(mover))
+        fixed_box = self._bbox_union(self._all_bodies(fixed))
+        sides = _asm.pick_join_sides(
+            self._hole_ends(face_b), fixed_box, self._hole_ends(face_a), mover_box
+        )
+
+        kp = adsk.fusion.JointKeyPointTypes
+        keypoints = {"start": kp.StartKeyPoint, "end": kp.EndKeyPoint}
+        jg = adsk.fusion.JointGeometry
+        for occ in (mover, fixed):
+            self._release_from_parent(occ)
+        root = self._root()
+
+        def _add(flipped: bool):
+            inp = root.joints.createInput(
+                jg.createByNonPlanarFace(face_a, keypoints[sides["mover"]]),
+                jg.createByNonPlanarFace(face_b, keypoints[sides["fixed"]]),
+            )
+            self._set_joint_motion(inp, joint_type)
+            if offset:
+                inp.offset = adsk.core.ValueInput.createByReal(offset)
+            if rotation:
+                inp.angle = adsk.core.ValueInput.createByString(f"{rotation} deg")
+            inp.isFlipped = flipped
+            return root.joints.add(inp)
+
+        joint = _add(sides["flip"] != bool(flip))
+        volume = self._pair_interference(mover, fixed)
+        auto_flipped = False
+        if volume > self._INTERFERENCE_EPS:
+            # Joint.isFlipped can't be edited without rolling the timeline
+            # back, so replace the joint with a flipped one.
+            was_flipped = joint.isFlipped
+            joint.deleteMe()
+            joint = _add(not was_flipped)
+            flipped_volume = self._pair_interference(mover, fixed)
+            if flipped_volume < volume:
+                volume, auto_flipped = flipped_volume, True
+            else:
+                joint.deleteMe()
+                joint = _add(was_flipped)
+
+        box = self._bbox_union(self._all_bodies(mover))
+        return {
+            "joint": joint.name,
+            "joint_type": joint_type,
+            "moved": mover.fullPathName,
+            "fixed": fixed.fullPathName,
+            "keypoints": {"moved": sides["mover"], "fixed": sides["fixed"]},
+            "side_from": sides["reason"],
+            "flipped": joint.isFlipped,
+            "auto_flipped": auto_flipped,
+            **self._joint_health(joint),
+            "moved_bbox": {"min": self._r(box[0]), "max": self._r(box[1])}
+            if box
+            else None,
+            "interference_volume": round(volume, 6),
+        }
+
+    # JointTypes enum value -> the joint_type names the tools take.
+    _JOINT_TYPE_NAMES = {
+        0: "rigid",
+        1: "revolute",
+        2: "slider",
+        3: "cylindrical",
+        4: "pin_slot",
+        5: "planar",
+        6: "ball",
+    }
+
+    def _joint_row(self, j, as_built: bool) -> dict:
+        m = j.jointMotion
+        jt = self._JOINT_TYPE_NAMES.get(m.jointType, str(m.jointType))
+        one, two = j.occurrenceOne, j.occurrenceTwo
+        row = {
+            "name": j.name,
+            "type": jt,
+            "one": one.fullPathName if one else None,
+            "two": two.fullPathName if two else None,
+        }
+        if as_built:
+            row["as_built"] = True
+        rot = jt in ("revolute", "cylindrical", "pin_slot")
+        slide = jt in ("slider", "cylindrical", "pin_slot")
+        values = []
+        if rot:
+            values.append(round(math.degrees(m.rotationValue), 3))
+        if slide:
+            values.append(round(m.slideValue, 4))
+        if values:
+            row["value"] = values[0] if len(values) == 1 else values
+        limits = {}
+        for kind, lim in (
+            ("rotation", m.rotationLimits if rot else None),
+            ("slide", m.slideLimits if slide else None),
+        ):
+            if lim is None:
+                continue
+            to_unit = math.degrees if kind == "rotation" else float
+            ends = {}
+            if lim.isMinimumValueEnabled:
+                ends["min"] = round(to_unit(lim.minimumValue), 4)
+            if lim.isMaximumValueEnabled:
+                ends["max"] = round(to_unit(lim.maximumValue), 4)
+            if ends:
+                limits[kind] = ends
+        if limits:
+            row["limits"] = limits
+        row["suppressed"] = bool(j.isSuppressed)
+        row.update(self._joint_health(j))
+        return row
+
+    def list_joints(self):
+        """Joints and as-built joints. Values: revolute deg, slider cm,
+        cylindrical/pin_slot [deg, cm]."""
+        root = self._root()
+        rows = [self._joint_row(j, False) for j in root.allJoints]
+        rows += [self._joint_row(j, True) for j in root.allAsBuiltJoints]
+        return {"count": len(rows), "joints": rows}
+
+    @staticmethod
+    def _own_mass_kg(comp) -> float:
+        """Mass of a component's own bodies (not its sub-occurrences)."""
+        acc = adsk.fusion.CalculationAccuracy.LowCalculationAccuracy
+        if comp.occurrences.count == 0:
+            return comp.getPhysicalProperties(acc).mass
+        return sum(b.getPhysicalProperties(acc).mass for b in comp.bRepBodies)
+
+    def get_bom(self):
+        """Occurrences grouped by component; mass computed once per component."""
+        root = self._root()
+        groups = {}
+        for occ in root.allOccurrences:
+            comp = occ.component
+            groups.setdefault(comp.name, [comp, []])[1].append(occ.fullPathName)
+
+        classes = _asm.part_classes()
+        class_counts = {c: 0 for c in classes}
+        rows, total_g, total_count = [], 0.0, 0
+        if root.bRepBodies.count:
+            g = self._own_mass_kg(root) * 1000
+            total_g += g
+            rows.append({"component": root.name, "count": 1, "mass_g": round(g, 1)})
+        for name, (comp, paths) in groups.items():
+            if comp.bRepBodies.count == 0:
+                continue
+            g = self._own_mass_kg(comp) * 1000
+            row = {"component": name}
+            if comp.partNumber and comp.partNumber != name:
+                row["part_number"] = comp.partNumber
+            row["count"] = len(paths)
+            row["mass_g"] = round(g, 1)
+            cls = _asm.classify_part(comp.partNumber, name, classes)
+            if cls:
+                row["class"] = cls
+                class_counts[cls] += len(paths)
+            if len(paths) <= 5:
+                row["occurrences"] = paths
+            rows.append(row)
+            total_g += g * len(paths)
+            total_count += len(paths)
+        rows.sort(key=lambda r: (-r["count"], r["component"]))
+        return {
+            "parts": rows,
+            "unique": len(rows),
+            "total_count": total_count,
+            "total_mass_g": round(total_g, 1),
+            **{f"{c}_count": n for c, n in class_counts.items()},
+        }
+
+    def _class_counts(self, occs) -> dict:
+        """{"motor": n, "servo": n} over occurrences (each copy counts)."""
+        counts = {}
+        for occ in occs:
+            comp = occ.component
+            cls = _asm.classify_part(comp.partNumber, comp.name)
+            if cls:
+                counts[cls] = counts.get(cls, 0) + 1
+        return counts
+
+    def check_robot_rules(
+        self,
+        subsystem: str = None,
+        envelope: dict = None,
+        budget: dict = None,
+        up: str = "z",
+        rules: dict = None,
+    ):
+        """Size and actuator rules for the whole robot, or one subsystem."""
+        root = self._root()
+        checks = []
+        if subsystem is None:
+            lim = _rules.limits_from(rules or _rules.load_constraints())
+            box = self._bbox_union(self._all_bodies())
+            if box is None:
+                raise RuntimeError("The design has no bodies to check")
+            size = [box[1][i] - box[0][i] for i in range(3)]
+            for name, key, vertical in (
+                ("starting", "starting_box", None),
+                ("expansion", "expansion_box", lim["expansion_vertical"]),
+            ):
+                if lim[key]:
+                    res = _rules.fits_box(size, lim[key], up, vertical)
+                    checks.append(
+                        {
+                            "rule": lim[f"{name}_rule"],
+                            "check": f"fits {name} box {lim[key]} cm",
+                            **res,
+                        }
+                    )
+            counts = self._class_counts(root.allOccurrences)
+            for cls in ("motor", "servo"):
+                limit = lim[f"max_{cls}s"]
+                if limit is not None:
+                    n = counts.get(cls, 0)
+                    checks.append(
+                        {
+                            "rule": lim["actuator_rule"],
+                            "check": f"{cls}s ≤ {limit}",
+                            "ok": n <= limit,
+                            "value": n,
+                        }
+                    )
+            scope = {"scope": "robot", "season": lim["season"]}
+        else:
+            occ = self._occurrence(subsystem)
+            box = self._bbox_union(self._all_bodies(occ))
+            if box is None:
+                raise RuntimeError(f"'{subsystem}' has no bodies to check")
+            size = [box[1][i] - box[0][i] for i in range(3)]
+            if envelope:
+                checks.append(
+                    {"check": "inside envelope", **_rules.envelope_check(box, envelope)}
+                )
+            # Interference only with top-level neighbours whose box touches ours.
+            top = occ
+            while top.assemblyContext is not None:
+                top = top.assemblyContext
+            near = []
+            for other in root.occurrences:
+                if other.fullPathName == top.fullPathName:
+                    continue
+                obox = self._bbox_union(self._all_bodies(other))
+                if obox is not None and _rules.boxes_overlap(box, obox):
+                    near.append(other.fullPathName)
+            hits = []
+            if near:
+                res = self.check_interference([occ.fullPathName, *near])
+                mine = occ.fullPathName
+                for hit in res["interferences"]:
+                    paths = hit["occurrences"]
+                    if any(p.startswith(mine) for p in paths) and any(
+                        not p.startswith(mine) for p in paths
+                    ):
+                        hits.append(
+                            {"occurrences": paths, "volume": round(hit["volume"], 4)}
+                        )
+            checks.append(
+                {
+                    "check": "no interference with other top-level components",
+                    "ok": not hits,
+                    "checked": near,
+                    **({"hits": hits} if hits else {}),
+                }
+            )
+            if budget:
+                counts = self._class_counts([occ, *occ.component.allOccurrences])
+                checks.extend(_rules.count_check(counts, budget))
+            scope = {"scope": "subsystem", **self._occ_info(occ)}
+        return {
+            **scope,
+            # Not "ok": that key is the response envelope's success flag.
+            "passed": all(c["ok"] for c in checks),
+            "checks": checks,
+            "size_cm": [round(s, 2) for s in size],
+            "size_in": [round(s / 2.54, 2) for s in size],
+            "note": "Sizes are for the current joint pose.",
+        }
 
     # ------------------------------------------------------------------
     # Inspection / Analysis
@@ -2649,14 +3860,17 @@ class CommandHandler:
     def check_interference(
         self, component_names: list, include_coincident_faces: bool = False
     ):
-        root = self._root()
         bodies = adsk.core.ObjectCollection.create()
-
+        # (body name, bbox, occurrence path) per input body. Interference
+        # results are temporary bodies with no assembly context, so they are
+        # mapped back to occurrences whose body box contains the overlap.
+        inputs = []
         for name in component_names:
-            for occ in root.allOccurrences:
-                if occ.component.name == name:
-                    for b in occ.bRepBodies:
-                        bodies.add(b)
+            for b in self._all_bodies(self._occurrence(name)):
+                bodies.add(b)
+                inputs.append(
+                    (b.name, self._bbox_union([b]), b.assemblyContext.fullPathName)
+                )
 
         if bodies.count < 2:
             raise RuntimeError("Need at least 2 components with bodies")
@@ -2673,10 +3887,21 @@ class CommandHandler:
         if interference is not None:
             for i in range(interference.count):
                 result = interference.item(i)
+                one, two = result.entityOne, result.entityTwo
+                overlap = self._bbox_union([result.interferenceBody])
+                occs = sorted(
+                    {
+                        path
+                        for body_name, box, path in inputs
+                        if body_name in (one.name, two.name)
+                        and _occ_refs.box_contains(box, overlap)
+                    }
+                )
                 results.append(
                     {
-                        "body_one": result.entityOne.name,
-                        "body_two": result.entityTwo.name,
+                        "body_one": one.name,
+                        "body_two": two.name,
+                        "occurrences": occs,
                         "volume": result.interferenceBody.volume,
                     }
                 )
@@ -2902,14 +4127,14 @@ class CommandHandler:
     def patch_surface(
         self, sketch_name: str, profile_index: int = 0, continuity: str = "connected"
     ):
-        root = self._root()
         sketch = self._sketch_by_name(sketch_name)
+        comp = sketch.parentComponent
 
         if sketch.profiles.count == 0:
             raise RuntimeError("No profiles in sketch")
         profile = sketch.profiles.item(profile_index)
 
-        patches = root.features.patchFeatures
+        patches = comp.features.patchFeatures
         inp = patches.createInput(
             profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation
         )
@@ -2923,34 +4148,42 @@ class CommandHandler:
         inp.boundaryContinuity = cont_map.get(continuity, cont_map["connected"])
 
         feat = patches.add(inp)
-        return {"feature_name": feat.name, "continuity": continuity}
+        return {
+            "feature_name": feat.name,
+            "continuity": continuity,
+            "component": comp.name,
+        }
 
     def stitch_surfaces(self, body_names: list, tolerance: float = 0.01):
-        root = self._root()
+        comp = self._root()
         bodies = adsk.core.ObjectCollection.create()
         for name in body_names:
-            bodies.add(self._body_by_name(name))
+            body, comp = self._native(self._body_by_name(name))
+            bodies.add(body)
 
-        stitches = root.features.stitchFeatures
+        stitches = comp.features.stitchFeatures
         inp = stitches.createInput(
             bodies,
             adsk.core.ValueInput.createByReal(tolerance),
             adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
         )
         feat = stitches.add(inp)
-        return {"feature_name": feat.name, "body_count": len(body_names)}
+        return {
+            "feature_name": feat.name,
+            "body_count": len(body_names),
+            "component": comp.name,
+        }
 
     def thicken_surface(
         self, body_name: str, thickness: float, direction: str = "symmetric"
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
         faces = adsk.core.ObjectCollection.create()
         for face in body.faces:
             faces.add(face)
 
-        thickens = root.features.thickenFeatures
+        thickens = comp.features.thickenFeatures
         inp = thickens.createInput(
             faces,
             adsk.core.ValueInput.createByReal(thickness),
@@ -2959,7 +4192,11 @@ class CommandHandler:
             direction == "symmetric",
         )
         feat = thickens.add(inp)
-        return {"feature_name": feat.name, "thickness": thickness}
+        return {
+            "feature_name": feat.name,
+            "thickness": thickness,
+            "component": comp.name,
+        }
 
     def ruled_surface(
         self,
@@ -2968,24 +4205,22 @@ class CommandHandler:
         distance: float = 1.0,
         rule_type: str = "normal",
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
         edge = body.edges.item(edge_index)
 
-        ruled = root.features.ruledSurfaceFeatures
+        ruled = comp.features.ruledSurfaceFeatures
         inp = ruled.createInput(edge, adsk.core.ValueInput.createByReal(distance))
         feat = ruled.add(inp)
-        return {"feature_name": feat.name, "distance": distance}
+        return {"feature_name": feat.name, "distance": distance, "component": comp.name}
 
     def trim_surface(self, body_name: str, tool_name: str):
-        root = self._root()
-        body = self._body_by_name(body_name)
-        tool = self._body_by_name(tool_name)
+        body, comp = self._native(self._body_by_name(body_name))
+        tool, _ = self._native(self._body_by_name(tool_name))
 
-        trims = root.features.trimFeatures
+        trims = comp.features.trimFeatures
         inp = trims.createInput(body, tool)
         feat = trims.add(inp)
-        return {"feature_name": feat.name}
+        return {"feature_name": feat.name, "component": comp.name}
 
     # ------------------------------------------------------------------
     # Sheet Metal
@@ -2999,11 +4234,10 @@ class CommandHandler:
         angle: float = 90,
         bend_radius: float = None,
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
         edge = body.edges.item(edge_index)
 
-        flanges = root.features.flangeFeatures
+        flanges = comp.features.flangeFeatures
         inp = flanges.createInput(edge, True)
         inp.angle = adsk.core.ValueInput.createByString(f"{angle} deg")
         inp.height = adsk.core.ValueInput.createByReal(height)
@@ -3011,7 +4245,12 @@ class CommandHandler:
             inp.bendRadius = adsk.core.ValueInput.createByReal(bend_radius)
 
         feat = flanges.add(inp)
-        return {"feature_name": feat.name, "height": height, "angle": angle}
+        return {
+            "feature_name": feat.name,
+            "height": height,
+            "angle": angle,
+            "component": comp.name,
+        }
 
     def create_bend(
         self,
@@ -3020,38 +4259,35 @@ class CommandHandler:
         angle: float = 90,
         bend_radius: float = None,
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
         if bend_line_sketch:
             sketch = self._sketch_by_name(bend_line_sketch)
             bend_line = sketch.sketchCurves.sketchLines.item(0)
 
-            bends = root.features.bendFeatures
+            bends = comp.features.bendFeatures
             inp = bends.createInput(body, bend_line, True)
             inp.bendAngle = adsk.core.ValueInput.createByString(f"{angle} deg")
             if bend_radius:
                 inp.bendRadius = adsk.core.ValueInput.createByReal(bend_radius)
 
             feat = bends.add(inp)
-            return {"feature_name": feat.name, "angle": angle}
+            return {"feature_name": feat.name, "angle": angle, "component": comp.name}
         else:
             raise RuntimeError("bend_line_sketch is required")
 
     def flat_pattern(self, body_name: str):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
-        flat_patterns = root.features.flatPatternFeatures
+        flat_patterns = comp.features.flatPatternFeatures
         inp = flat_patterns.createInput(body)
         feat = flat_patterns.add(inp)
-        return {"feature_name": feat.name}
+        return {"feature_name": feat.name, "component": comp.name}
 
     def unfold(self, body_name: str, bend_indices: list = None):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
-        unfolds = root.features.unfoldFeatures
+        unfolds = comp.features.unfoldFeatures
 
         bends = adsk.core.ObjectCollection.create()
         if bend_indices:
@@ -3075,7 +4311,7 @@ class CommandHandler:
 
         inp = unfolds.createInput(bends, stationary)
         feat = unfolds.add(inp)
-        return {"feature_name": feat.name}
+        return {"feature_name": feat.name, "component": comp.name}
 
     # ------------------------------------------------------------------
     # CAM
@@ -3460,6 +4696,184 @@ class CommandHandler:
         }
 
     # ------------------------------------------------------------------
+    # Documents
+    # ------------------------------------------------------------------
+
+    def _doc_info(self, doc):
+        return {
+            "name": doc.name,
+            "active": doc == self.app.activeDocument,
+            "saved": doc.isSaved,
+            "modified": doc.isModified,
+        }
+
+    def _document(self, name: str = None, exact: bool = False):
+        """Open document by name (exact, then case-insensitive unless
+        *exact*); active if None."""
+        if name is None:
+            doc = self.app.activeDocument
+            if doc is None:
+                raise RuntimeError("No active document")
+            return doc
+        docs = list(self.app.documents)
+        matchers = [lambda d: d.name == name]
+        if not exact:
+            matchers.append(lambda d: d.name.lower() == name.lower())
+        for match in matchers:
+            hits = [d for d in docs if match(d)]
+            if len(hits) == 1:
+                return hits[0]
+            if len(hits) > 1:
+                raise RuntimeError(
+                    f"'{name}' matches {len(hits)} open documents — save them "
+                    "under distinct names or activate one with the UI"
+                )
+        names = ", ".join(d.name for d in docs[:12])
+        raise RuntimeError(f"Document '{name}' is not open. Open documents: {names}")
+
+    def list_documents(self):
+        docs = [self._doc_info(d) for d in self.app.documents]
+        return {"count": len(docs), "documents": docs}
+
+    def new_document(self, design_type: str = "parametric"):
+        doc = self.app.documents.add(adsk.core.DocumentTypes.FusionDesignDocumentType)
+        design = adsk.fusion.Design.cast(
+            doc.products.itemByProductType("DesignProductType")
+        )
+        design.designType = (
+            adsk.fusion.DesignTypes.DirectDesignType
+            if design_type == "direct"
+            else adsk.fusion.DesignTypes.ParametricDesignType
+        )
+        return {**self._doc_info(doc), "design_type": design_type}
+
+    # Each folder listing is a cloud round trip; keep well under the 30 s
+    # bridge timeout (a miss took 6.6 s on a small project).
+    _CLOUD_SEARCH_DEPTH = 3
+    _CLOUD_SEARCH_FILES = 300
+
+    def _find_cloud_file(self, name: str, start=None):
+        """Breadth-first search for a design by name from *start* (default:
+        the active project's root)."""
+        start = start or self.app.data.activeProject.rootFolder
+        queue, seen, loose = [(start, 0)], 0, None
+        while queue:
+            folder, depth = queue.pop(0)
+            for df in folder.dataFiles:
+                seen += 1
+                if df.name == name:
+                    return df
+                if loose is None and df.name.lower() == name.lower():
+                    loose = df
+                if seen >= self._CLOUD_SEARCH_FILES:
+                    return loose
+            if depth < self._CLOUD_SEARCH_DEPTH:
+                queue.extend((f, depth + 1) for f in folder.dataFolders)
+        return loose
+
+    def open_document(
+        self, name: str = None, file_path: str = None, folder: str = None
+    ):
+        if bool(name) == bool(file_path):
+            raise RuntimeError("Pass exactly one of 'name' or 'file_path'")
+        if file_path:
+            path = os.path.abspath(os.path.expanduser(file_path))
+            if not path.lower().endswith(".f3d"):
+                raise RuntimeError(
+                    "open_document takes a .f3d file — use insert_part for STEP"
+                )
+            if not os.path.exists(path):
+                raise RuntimeError(f"File not found: {path}")
+            im = self.app.importManager
+            doc = im.importToNewDocument(im.createFusionArchiveImportOptions(path))
+            return {**self._doc_info(doc), "source": "file"}
+        for doc in self.app.documents:
+            if doc.name == name:
+                doc.activate()
+                return {**self._doc_info(doc), "source": "already_open"}
+        start = self._cloud_folder(folder, create=False) if folder else None
+        df = self._find_cloud_file(name, start)
+        if df is None:
+            project = self.app.data.activeProject.name
+            raise RuntimeError(
+                f"No design named '{name}' in project '{project}' under "
+                f"'{folder or '/'}' (searched {self._CLOUD_SEARCH_DEPTH} folder "
+                "levels) — pass 'folder' to search deeper"
+            )
+        doc = self.app.documents.open(df, True)
+        return {**self._doc_info(doc), "source": "cloud"}
+
+    def activate_document(self, name: str):
+        doc = self._document(name)
+        doc.activate()
+        return self._doc_info(doc)
+
+    def _cloud_folder(self, path: str, create: bool = True):
+        """Folder under the active project's root from "FTC/2026", created
+        if missing (or an error when *create* is False)."""
+        folder = self.app.data.activeProject.rootFolder
+        for part in [p for p in (path or "").replace("\\", "/").split("/") if p]:
+            sub = folder.dataFolders.itemByName(part)
+            if sub is None and not create:
+                raise RuntimeError(f"Folder '{path}' not found in the active project")
+            folder = sub if sub is not None else folder.dataFolders.add(part)
+        return folder
+
+    def save_document(
+        self,
+        name: str = None,
+        folder: str = None,
+        description: str = "Saved by MCP",
+        document: str = None,
+    ):
+        doc = self._document(document)
+        project = self.app.data.activeProject.name
+        if doc.isSaved and not name:
+            if not doc.save(description):
+                raise RuntimeError(f"Saving '{doc.name}' failed")
+            return {**self._doc_info(doc), "project": project, "new_version": True}
+        if not name:
+            raise RuntimeError(
+                f"'{doc.name}' has never been saved — pass 'name' (and "
+                "optionally 'folder')"
+            )
+        target = self._cloud_folder(folder)
+        if not doc.saveAs(name, target, description, ""):
+            raise RuntimeError(f"saveAs '{name}' failed")
+        return {
+            **self._doc_info(doc),
+            "project": project,
+            "folder": folder or "",
+            "new_version": False,
+        }
+
+    def close_document(
+        self, name: str, save: bool = False, discard_changes: bool = False
+    ):
+        # Name required and matched exactly: closing the wrong document can
+        # throw away the user's work (Claude.md lesson 17).
+        doc = self._document(name, exact=True)
+        doc_name = doc.name
+        if save:
+            if not doc.isSaved:
+                raise RuntimeError(
+                    f"'{doc_name}' has never been saved — call save_document "
+                    "with a name first"
+                )
+        elif doc.isModified and not discard_changes:
+            raise RuntimeError(
+                f"'{doc_name}' has unsaved changes — pass save=true or "
+                "discard_changes=true"
+            )
+        doc.close(bool(save))
+        active = self.app.activeDocument
+        return {
+            "closed": doc_name,
+            "saved": bool(save),
+            "active": active.name if active is not None else None,
+        }
+
+    # ------------------------------------------------------------------
     # Health check
     # ------------------------------------------------------------------
 
@@ -3566,9 +4980,14 @@ class CommandHandler:
         output = buf.getvalue()
         result = last_expr_value if last_expr_value is not None else output
 
-        # Warn if design type changed during execution
-        type_after = design.designType
+        # The code may have closed or switched the document (S11): the old
+        # design is then a deleted object and must not be touched.
+        try:
+            document_changed = not design.isValid or self._design() != design
+        except RuntimeError:  # no design is active any more
+            document_changed = True
         design_type_warning = None
+        type_after = type_before if document_changed else design.designType
         if type_before != type_after:
             parametric = adsk.fusion.DesignTypes.ParametricDesignType
             design_type_warning = (
@@ -3587,6 +5006,8 @@ class CommandHandler:
                 result = str(result)
 
         response = {"executed": True, "result": result, "output": output}
+        if document_changed:
+            response["document_changed"] = True
         if design_type_warning:
             response["design_type_warning"] = design_type_warning
         return response
@@ -3629,20 +5050,23 @@ class CommandHandler:
                 return None
             root = design.rootComponent
 
-            # Count bodies recursively (root + occurrences).
-            body_count = root.bRepBodies.count
+            # Collect body proxies recursively (root + occurrences).
+            bodies = list(root.bRepBodies)
             try:
                 for occ in design.rootComponent.allOccurrences:
-                    body_count += occ.bRepBodies.count
+                    bodies.extend(occ.bRepBodies)
             except Exception:
                 pass  # allOccurrences can fail on empty designs
+            body_count = len(bodies)
 
+            # root.boundingBox is stale for moved occurrences; union the
+            # proxies instead (they are in assembly coordinates).
             bbox_dict = None
             if body_count > 0:
                 try:
-                    bbox = root.boundingBox
-                    if bbox is not None:
-                        bbox_dict = self._bbox_dict(bbox)
+                    box = self._bbox_union(bodies)
+                    if box is not None:
+                        bbox_dict = {"min": box[0], "max": box[1]}
                 except Exception:
                     bbox_dict = None
 

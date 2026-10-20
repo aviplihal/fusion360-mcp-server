@@ -48,3 +48,30 @@ def plane_z_at(
     if nz == 0:
         raise ValueError("plane is vertical: no unique Z above (x, y)")
     return oz - (nx * (x - ox) + ny * (y - oy)) / nz
+
+
+def is_concave_cylinder(
+    normal: tuple[float, float, float],
+    point: tuple[float, float, float],
+    axis_origin: tuple[float, float, float],
+    axis_dir: tuple[float, float, float],
+) -> bool:
+    """True if a cylindrical face is a hole rather than a boss or round.
+
+    *normal* is the face's outward normal at *point*. A hole's material is
+    outside the cylinder, so its normal points toward the axis; a boss's
+    points away.
+    """
+    v = [point[i] - axis_origin[i] for i in range(3)]
+    norm = sum(a * a for a in axis_dir) ** 0.5
+    ax = [a / norm for a in axis_dir]
+    along = sum(v[i] * ax[i] for i in range(3))
+    radial = [v[i] - ax[i] * along for i in range(3)]
+    return sum(normal[i] * radial[i] for i in range(3)) < 0
+
+
+def sort_near(rows: list[dict], near: list[float] | None, key: str) -> list[dict]:
+    """*rows* ordered by distance from point *near* to ``row[key]``."""
+    if near is None:
+        return rows
+    return sorted(rows, key=lambda r: sum((r[key][i] - near[i]) ** 2 for i in range(3)))

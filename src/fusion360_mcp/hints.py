@@ -103,6 +103,16 @@ _RULES: list[tuple[str, str, list[str]]] = [
         ],
     ),
     (
+        r"grounded, it can ?not move",
+        "JOINT_GROUNDED_FIRST",
+        [
+            "The first occurrence of a joint is the one that moves, and it "
+            "is grounded.",
+            "Swap component_one and component_two so the grounded part is "
+            "second.",
+        ],
+    ),
+    (
         r"timeout",
         "TIMEOUT",
         [

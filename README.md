@@ -123,7 +123,7 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 2. Stop the add-in in Fusion (Shift+S → Add-Ins → Fusion360MCP → Stop)
 3. Delete the add-in folder from Fusion's AddIns directory
 
-## Available Tools (93)
+## Available Tools (110)
 
 > Tools marked **(2026+)** require a recent Fusion build — they use APIs introduced in the January–July 2026 releases and are live-tested on Fusion 2705 (arm64).
 
@@ -134,7 +134,7 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 | `get_scene_info` | Design name, bodies, sketches, features, camera |
 | `get_object_info` | Detailed info about a named body or sketch |
 | `get_bounding_box` | Axis-aligned bbox (min/max/size/center) for body or component; unions all bodies when called on a component |
-| `list_components` | List all components in the design |
+| `list_components` | Assembly tree of occurrences with placement |
 
 ### Design Type Safety
 | Tool | Description |
@@ -145,7 +145,7 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 ### Sketching
 | Tool | Description |
 |------|-------------|
-| `create_sketch` | New sketch on xy/yz/xz plane, optional offset |
+| `create_sketch` | New sketch on xy/yz/xz plane, optional offset; `component` builds inside a component |
 | `draw_rectangle` | Rectangle in most recent sketch |
 | `draw_circle` | Circle in most recent sketch |
 | `draw_line` | Line in most recent sketch |
@@ -163,7 +163,7 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 ### Features
 | Tool | Description |
 |------|-------------|
-| `extrude` | Extrude a sketch profile |
+| `extrude` | Extrude a sketch profile (in the sketch's component) |
 | `revolve` | Revolve a profile around an axis |
 | `sweep` | Sweep a profile along a path |
 | `loft` | Loft between two or more profiles |
@@ -182,6 +182,7 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 | `scale_body` | Scale uniformly or non-uniformly |
 | `suppress_feature` | Suppress a timeline feature |
 | `unsuppress_feature` | Re-enable a suppressed feature |
+| `get_timeline` | Timeline items with type, suppressed, health and warning/error messages; errors_only filter |
 
 ### Body Operations
 | Tool | Description |
@@ -195,11 +196,11 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 ### Direct Primitives
 | Tool | Description |
 |------|-------------|
-| `create_box` | Box (via TemporaryBRepManager, history-less) |
+| `create_box` | Box (via TemporaryBRepManager, history-less) (optional `component`) |
 | `create_box_parametric` | History-based box: sketch rectangle + dimensions + extrude. `length`/`width`/`height` accept numbers (cm) or string expressions referencing User Parameters (e.g. `"boxL"`, `"outer - 2*wall_t"`) |
-| `create_cylinder` | Cylinder |
-| `create_sphere` | Sphere |
-| `create_torus` | Torus |
+| `create_cylinder` | Cylinder (optional `component`) |
+| `create_sphere` | Sphere (optional `component`) |
+| `create_torus` | Torus (optional `component`) |
 
 ### Surface Operations
 | Tool | Description |
@@ -229,9 +230,19 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 | Tool | Description |
 |------|-------------|
 | `create_component` | Create a sub-assembly component |
-| `add_joint` | Joint between two components |
-| `create_as_built_joint` | Joint from current positions |
+| `add_joint` | Joint two occurrences at face/edge refs (e.g. hole to hole) or origins |
+| `create_as_built_joint` | Joint from current positions (non-rigid types take an axis ref) |
 | `create_rigid_group` | Lock components together |
+| `ground_occurrence` | Fix an occurrence in place (or release it) |
+| `insert_part` | Insert a STEP/f3d file as an occurrence; repeat inserts reuse the component |
+| `move_occurrence` | Place an occurrence (absolute or relative) |
+| `find_holes` | Holes of an occurrence with refs and start/end points |
+| `list_faces` | Planar/cylindrical faces of an occurrence with refs |
+| `join_on_holes` | Bolt two parts hole-to-hole on the correct side, checked for interference |
+| `list_joints` | List joints with type, value, limits and health |
+| `get_bom` | Bill of materials with mass and motor/servo counts |
+| `set_joint_value` | Drive a joint (deg / cm) and set its limits; temporary by default, persist=true writes angle/offset |
+| `check_robot_rules` | Check FTC size and motor/servo rules for the robot or one subsystem |
 
 ### Inspection & Analysis
 | Tool | Description |
@@ -277,6 +288,16 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 | `cam_list_setups` | List all manufacturing setups |
 | `cam_list_operations` | List operations in a setup |
 | `cam_get_operation_info` | Get operation details (strategy, tool, parameters) |
+
+### Documents
+| Tool | Description |
+|------|-------------|
+| `list_documents` | Open documents: name, active, saved, modified |
+| `new_document` | New design document (parametric or direct), made active |
+| `open_document` | Activate an open document, open a cloud design from the active project by name (optional folder), or a local .f3d |
+| `activate_document` | Switch to an open document |
+| `save_document` | Save to the Fusion cloud (new version, or save-as with name and folder). Confirm with the user first |
+| `close_document` | Close a document by its exact name; refuses unsaved changes unless save or discard_changes |
 
 ### Code Execution
 | Tool | Description |

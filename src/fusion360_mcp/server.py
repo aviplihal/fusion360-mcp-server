@@ -22,6 +22,10 @@ from .connection import (
     get_connection,
     reset_connection,
 )
+from .kb_design import PROMPTS as KB_PROMPTS
+from .kb_design import RESOURCES as KB_RESOURCES
+from .kb_design import read_kb_resource, subsystem_prompt, whole_robot_prompt
+from .kb_tools import call_kb_tool, get_kb_tool_list, is_kb_tool
 from .mock import mock_command
 from .tools import get_tool_by_name, get_tool_list
 
@@ -186,13 +190,16 @@ def main(mode: str, host: str, port: int) -> int:
 
     @app.list_tools()
     async def list_tools() -> list[types.Tool]:
-        return get_tool_list()
+        return get_tool_list() + get_kb_tool_list()
 
     @app.call_tool()
     async def call_tool(
         name: str,
         arguments: dict,
     ) -> list[types.ContentBlock]:
+        # Knowledge base tools run here, in both modes; Fusion isn't involved.
+        if is_kb_tool(name):
+            return call_kb_tool(name, arguments)
         tool_def = get_tool_by_name(name)
         if not tool_def:
             raise ValueError(f"Unknown tool: {name}")
@@ -243,10 +250,16 @@ def main(mode: str, host: str, port: int) -> int:
                 description="All user-defined parameters in the design",
                 mimeType="application/json",
             ),
+        ] + [
+            types.Resource(uri=uri, name=name, description=desc, mimeType=mime)
+            for uri, (name, desc, _file, mime) in KB_RESOURCES.items()
         ]
 
     @app.read_resource()
     async def read_resource(uri: str) -> str:
+        uri = str(uri)
+        if uri in KB_RESOURCES:
+            return read_kb_resource(uri)
         if uri == "fusion360://status":
             try:
                 result = _send(mode, "ping", host=host, port=port)
@@ -401,17 +414,41 @@ def main(mode: str, host: str, port: int) -> int:
 
     @app.list_prompts()
     async def list_prompts() -> list[types.Prompt]:
-        return list(_PROMPTS.values())
+        return list(_PROMPTS.values()) + [
+            types.Prompt(
+                name=name,
+                description=desc,
+                arguments=[
+                    types.PromptArgument(name=a, required=True) for a in arg_names
+                ],
+            )
+            for name, (desc, arg_names) in KB_PROMPTS.items()
+        ]
 
     @app.get_prompt()
     async def get_prompt(
         name: str,
         arguments: dict | None = None,
     ) -> types.GetPromptResult:
+        args = arguments or {}
+        if name in KB_PROMPTS:
+            if name == "work_on_subsystem":
+                text = subsystem_prompt(
+                    None, args.get("robot", ""), args.get("subsystem", "")
+                )
+            else:
+                text = whole_robot_prompt(None, args.get("robot", ""))
+            return types.GetPromptResult(
+                description=KB_PROMPTS[name][0],
+                messages=[
+                    types.PromptMessage(
+                        role="user", content=types.TextContent(type="text", text=text)
+                    )
+                ],
+            )
         prompt = _PROMPTS.get(name)
         if not prompt:
             raise ValueError(f"Unknown prompt: {name}")
-        args = arguments or {}
 
         if name == "create-box":
             length = args.get("length", "10")

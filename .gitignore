@@ -10,3 +10,8 @@ build/
 *.log
 
 .worktrees
+kb/.index.sqlite
+.cache/
+kb/parts/.cache/
+kb/ingest/drafts/
+kb/ingest/run2_*.txt

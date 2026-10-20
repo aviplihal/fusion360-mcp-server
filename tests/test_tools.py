@@ -141,6 +141,23 @@ def test_expected_tools_present():
         # assembly (extended)
         "create_as_built_joint",
         "create_rigid_group",
+        "ground_occurrence",
+        "find_holes",
+        "list_faces",
+        "insert_part",
+        "move_occurrence",
+        "join_on_holes",
+        "list_joints",
+        "get_bom",
+        "check_robot_rules",
+        "list_documents",
+        "new_document",
+        "open_document",
+        "activate_document",
+        "save_document",
+        "close_document",
+        "set_joint_value",
+        "get_timeline",
         # inspection / analysis
         "measure_distance",
         "measure_angle",
@@ -272,3 +289,21 @@ def test_get_tool_by_name_edge_cases():
     assert get_tool_by_name("") is None
     assert get_tool_by_name("PING") is None  # case sensitive
     assert get_tool_by_name("ping ") is None  # trailing space
+
+
+def test_component_param_on_builders():
+    """create_sketch and the primitives take an optional occurrence name."""
+    from fusion360_mcp.tools import _OCC_NAME
+
+    for name in (
+        "create_sketch",
+        "create_box",
+        "create_cylinder",
+        "create_sphere",
+        "create_torus",
+    ):
+        schema = get_tool_by_name(name)["inputSchema"]
+        prop = schema["properties"]["component"]
+        assert prop["type"] == "string", name
+        assert _OCC_NAME in prop["description"], name
+        assert "component" not in schema.get("required", []), name

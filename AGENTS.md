@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is an MCP server (93 tools) that connects AI coding agents to Autodesk Fusion 360 for CAD automation. It consists of two pieces:
+This is an MCP server (110 tools) that connects AI coding agents to Autodesk Fusion 360 for CAD automation. It consists of two pieces:
 
 1. **MCP Server** (this repo) — speaks MCP protocol over stdio, forwards commands to Fusion via TCP
 2. **Fusion 360 Add-in** — runs inside Fusion, executes commands on the main thread via CustomEvent bridge
@@ -16,7 +16,7 @@ Claude Code ──stdio──> MCP Server ──TCP :9876──> Fusion Add-in �
 
 The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion API calls to the main thread. Socket threads submit work items and block on a per-item `threading.Event` until the main thread completes execution.
 
-## Available tools (93)
+## Available tools (110)
 
 ### Scene & Query
 | Tool | Description |
@@ -24,12 +24,12 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 | `ping` | Health check (no Fusion API, instant) |
 | `get_scene_info` | Design name, bodies, sketches, features, camera |
 | `get_object_info` | Detailed info about a named body or sketch |
-| `list_components` | List all components in the design |
+| `list_components` | Assembly tree: occurrences, translation, rotation if any, grounded; `depth` limits levels |
 
 ### Sketching
 | Tool | Description |
 |------|-------------|
-| `create_sketch` | New sketch on xy/yz/xz, optional offset |
+| `create_sketch` | New sketch on xy/yz/xz, optional offset; `component` = build inside that occurrence's component |
 | `draw_rectangle` | Rectangle in most recent sketch |
 | `draw_circle` | Circle in most recent sketch |
 | `draw_line` | Line in most recent sketch |
@@ -47,7 +47,7 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 ### Features
 | Tool | Description |
 |------|-------------|
-| `extrude` | Extrude a sketch profile |
+| `extrude` | Extrude a sketch profile (in the sketch's component) |
 | `revolve` | Revolve a profile around an axis |
 | `sweep` | Sweep a profile along a path |
 | `loft` | Loft between two or more profiles |
@@ -66,6 +66,7 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 | `scale_body` | Scale uniformly or non-uniformly |
 | `suppress_feature` | Suppress a timeline feature |
 | `unsuppress_feature` | Re-enable a suppressed feature |
+| `get_timeline` | Timeline items with type, suppressed, health and warning/error messages; errors_only filter |
 
 ### Body Operations
 | Tool | Description |
@@ -78,10 +79,10 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 ### Direct Primitives
 | Tool | Description |
 |------|-------------|
-| `create_box` | Box (via TemporaryBRepManager) |
-| `create_cylinder` | Cylinder |
-| `create_sphere` | Sphere |
-| `create_torus` | Torus |
+| `create_box` | Box (via TemporaryBRepManager) (optional `component`) |
+| `create_cylinder` | Cylinder (optional `component`) |
+| `create_sphere` | Sphere (optional `component`) |
+| `create_torus` | Torus (optional `component`) |
 
 ### Surface Operations
 | Tool | Description |
@@ -110,10 +111,20 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 ### Assembly
 | Tool | Description |
 |------|-------------|
-| `create_component` | Create a sub-assembly component |
-| `add_joint` | Joint between two components |
-| `create_as_built_joint` | Joint from current positions |
-| `create_rigid_group` | Lock components together |
+| `create_component` | Create a sub-assembly component; returns its occurrence name |
+| `add_joint` | Joint occurrence one onto two at face/edge refs + keypoints (or origins); offset, angle, flip |
+| `create_as_built_joint` | Joint from current positions; non-rigid types take a geometry ref for the axis |
+| `create_rigid_group` | Lock occurrences together |
+| `ground_occurrence` | Fix an occurrence in place (or release it) |
+| `insert_part` | Insert a STEP/f3d file as an occurrence; repeat inserts reuse the component |
+| `move_occurrence` | Place an occurrence (absolute or relative); may renumber it in parametric designs |
+| `find_holes` | Holes of an occurrence with refs, diameter, start/end points (for add_joint) |
+| `list_faces` | Planar/cylindrical faces of an occurrence with refs, normals, centers |
+| `join_on_holes` | Bolt one occurrence to another hole-to-hole, mover placed outside the fixed part; rigid/revolute, rotation; returns interference_volume |
+| `list_joints` | Joints and as-built joints: type, occurrences, value, limits, health |
+| `get_bom` | Parts grouped by component: count, mass, motor/servo counts, total mass |
+| `set_joint_value` | Drive a joint (deg / cm) and set its limits; temporary by default, persist=true writes angle/offset |
+| `check_robot_rules` | FTC size (R102/R105) and motor/servo (R503) rules for the robot, or one subsystem's envelope, interference and actuator budget |
 
 ### Inspection & Analysis
 | Tool | Description |
@@ -153,6 +164,16 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 | `cam_list_operations` | List operations in a setup |
 | `cam_get_operation_info` | Get operation details (strategy, tool, parameters) |
 
+### Documents
+| Tool | Description |
+|------|-------------|
+| `list_documents` | Open documents: name, active, saved, modified |
+| `new_document` | New design document (parametric or direct), made active |
+| `open_document` | Activate an open document, open a cloud design from the active project by name (optional folder), or a local .f3d |
+| `activate_document` | Switch to an open document |
+| `save_document` | Save to the Fusion cloud (new version, or save-as with name and folder). Confirm with the user first |
+| `close_document` | Close a document by its exact name; refuses unsaved changes unless save or discard_changes |
+
 ### Code Execution
 | Tool | Description |
 |------|-------------|
@@ -162,6 +183,24 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 | Tool | Description |
 |------|-------------|
 | `render_view` | Capture the active viewport as a PNG. Pass `view=iso\|front\|top\|...` to reposition the camera first. Returns an image content block you can visually inspect to validate geometry before committing to more operations. |
+
+## Knowledge base tools (6)
+
+These run inside the MCP server and work without Fusion. They search the `kb/` folder (set `FUSION_MCP_KB_DIR` if the server isn't run from the repo): past FTC robots and their mechanisms, reusable design ideas, the current game manual's rules, and reference books. The SQLite index (`kb/.index.sqlite`) rebuilds itself whenever a file in `kb/` changes.
+
+| Tool | Description |
+|------|-------------|
+| `kb_search` | One line per hit, best first. Filters: `kind` (robot, mechanism, idea, rule, book), `type` (mechanism type), `season`, exact `facets`. Robots from stronger teams (FTC Scout rating) rank higher |
+| `kb_get` | Open one entry by id: a robot with its mechanisms, a mechanism card, an idea, a rule (`R105`) or a book section |
+| `kb_feedback` | Record the user's verdict (`liked`/`disliked`) on a design built from KB entries, with the reason. Writes `kb/feedback.csv`; each like is +0.1, each dislike −0.1 on that entry's rank (0.7–1.3×) |
+| `kb_find_part` | Find goBILDA parts in `kb/parts/parts.csv`. Exact filters: `sku`, `type`, `series`, `counts_as` (motor/servo/none, for the 8+8 rule), `length_mm` (+ optional `length_tol_mm`). `name` takes free text or a part name from another team's CAD (`Sonic Hub - 8mm REX (GB)`, `… 5203-2402-0019`): a SKU in the name wins, otherwise every number in it must match exactly. `download: true` fetches the single match's STEP file into `~/.fusion-mcp/step-cache/<sku>.step` (once) and returns the path for `insert_part` |
+
+| `robot_design` | The robot design file `kb/designs/<robot>/design.md`: frame (origin at the footprint centre on the tiles, +x right, +y front, +z up, cm) and per subsystem its envelope, interfaces, motor/servo budget, status, KB entries and Fusion component. Actions: `get`, `create` (from `kb/designs/_template/design.md`), `update_subsystem` (refused if motors or servos total > 8 or a stowed envelope leaves the 45.7 cm start cube; moving parts get an `extended` box checked against R105), `add_note` (open question, or `section: log`), `resolve_note` |
+| `kb_save_design` | Saves an **accepted** subsystem as our own mechanism card `kb/robots/ours-<robot>/<subsystem>.md` (+ `robot.md`, `source: ours`, ranked 1.2× in search). Facets must come from the type's list; `notable` ≤ 80 words; brief/decisions/results ≤ 100 words each |
+
+Search before designing a mechanism, and use `kind: "rule"` to check a rule. When the user accepts or rejects a part you based on KB entries, call `kb_feedback` with only the entries that caused the verdict. Before modeling a COTS part, find it with `kb_find_part` and insert its STEP file instead.
+
+**Session knowledge.** Resources `kb://design-rules` (`kb/design_rules.md`: tolerances for FDM, laser wood, laser aluminum, fasteners), `kb://lessons` (`kb/lessons.md`, ≤ 150 lines) and `kb://constraints` (the current season's `constraints.json`). The prompt `work_on_subsystem(robot, subsystem)` gives the 8-step subsystem loop (load, brief, research, concepts, build, checks S1–S4, verdict, save) with the design file, constraints, design rules and lessons inlined; `build_whole_robot(robot)` runs that loop for every unfinished subsystem (drivetrain first), then the robot checks P1–P5.
 
 ## Response shape
 
@@ -217,6 +256,10 @@ Known `error_kind` values: `PROFILE_NOT_CLOSED`, `SKETCH_NOT_FOUND`, `BODY_NOT_F
 - **One operation per tool call.** Never batch multiple operations — Fusion's API is not thread-safe and complex scripts crash the add-in.
 - **No loops inside execute_code.** If you need to create 3 similar features, make 3 separate tool calls.
 - **Keep execute_code under ~15 lines.** Prefer the dedicated tools over execute_code whenever possible.
+- **Name parts by occurrence.** Copies of one part share a component name (`Channel`) but have unique occurrence names (`Channel:1`, `Channel:2`); `list_components` shows them. Assembly tools accept either, and error with the candidates when a component name is ambiguous.
+- **Bolting parts:** `find_holes` on both parts, then `join_on_holes(occ_a=mover, hole_a, occ_b=fixed, hole_b)`; it picks the side and checks interference. For full control use `add_joint` with `geometry_one` = moving part's hole, `geometry_two` = fixed part's hole. Moving `end` → fixed `start` lands the mover on the fixed hole's start side; `start` → `end` on its end side. The first occurrence moves, so ground the base part first. Check `health` and `check_interference` afterwards.
+- **Check the rules per subsystem.** `check_robot_rules(subsystem=..., envelope=..., budget=...)` after each subsystem, and without `subsystem` for the whole robot. Sizes use the current joint pose, so drive joints to stowed and extended with `set_joint_value` and check both.
+- **Model a part inside its component.** `create_sketch(component="Arm:1")` and the primitives' `component` build there, in the component's own coordinates; extrude/revolve/sweep/loft follow the sketch, and body tools (fillet, shell, create_hole, patterns, …) work in the body's own component and coordinates. Results include `component`.
 - **Units are centimeters.** Fusion's internal API uses cm, not mm.
 - **30-second timeout.** Commands that take longer than 30s will return a timeout error.
 - **body_name preferred over body_index.** Use named lookups when possible.
