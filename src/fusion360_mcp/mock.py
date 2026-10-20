@@ -154,7 +154,11 @@ def _get_bounding_box(p: dict) -> dict:
 
 def _create_sketch(p: dict) -> dict:
     plane = p.get("plane", "xy")
-    return {"sketch_name": f"Sketch_mock_{plane}", "plane": plane}
+    return {
+        "sketch_name": f"Sketch_mock_{plane}",
+        "plane": plane,
+        "component": p.get("component") or "RootComponent",
+    }
 
 
 def _draw_rectangle(p: dict) -> dict:
@@ -182,6 +186,7 @@ def _extrude(p: dict) -> dict:
         "body_name": "Body_mock",
         "height": p.get("height", 1),
         "operation": p.get("operation", "new_body"),
+        "component": "RootComponent",
     }
 
 
@@ -765,6 +770,7 @@ def _create_box(p: dict) -> dict:
         "length": p.get("length", 1),
         "width": p.get("width", 1),
         "height": p.get("height", 1),
+        "component": p.get("component") or "RootComponent",
     }
 
 
@@ -773,6 +779,7 @@ def _create_cylinder(p: dict) -> dict:
         "body_name": "Cylinder_mock",
         "radius": p.get("radius", 1),
         "height": p.get("height", 1),
+        "component": p.get("component") or "RootComponent",
     }
 
 
@@ -780,6 +787,7 @@ def _create_sphere(p: dict) -> dict:
     return {
         "body_name": "Sphere_mock",
         "radius": p.get("radius", 1),
+        "component": p.get("component") or "RootComponent",
     }
 
 
@@ -788,6 +796,7 @@ def _create_torus(p: dict) -> dict:
         "body_name": "Torus_mock",
         "major_radius": p.get("major_radius", 2),
         "minor_radius": p.get("minor_radius", 0.5),
+        "component": p.get("component") or "RootComponent",
     }
 
 
