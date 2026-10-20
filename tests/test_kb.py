@@ -268,3 +268,46 @@ def test_snippets_stay_on_one_line():
         "snip": "first\nA. second",
     }
     assert hit_line(doc) == "R1 · rule · T\n    first A. second"
+
+
+def test_robot_card_stays_a_robot_for_mechanism_only_entries(kb_dir):
+    _write(
+        kb_dir / "robots" / "cb-mech" / "robot.md",
+        "---\nid: cb-mech\ntitle: Just a drivetrain\nkind: mechanism\n"
+        "entry: mechanism\n---\n\nOne drivetrain.\n",
+    )
+    doc = KnowledgeBase(kb_dir).get("cb-mech")
+    assert doc["kind"] == "robot"
+    assert doc["meta"]["entry"] == "mechanism"
+
+
+def test_hit_line_shows_key_facets_first_and_labels_numbers():
+    from fusion360_mcp.kb_tools import hit_line
+
+    doc = {
+        "id": "r/shooter",
+        "kind": "mechanism",
+        "type": "shooter",
+        "title": "Shooter",
+        "multiplier": 1.0,
+        "snip": None,
+        "meta": {
+            "facets": {
+                "feeder": "kicker",
+                "game_piece": "other",
+                "hood": "adjustable",
+                "shooter_type": "counter roller",
+                "wheel_diameter_mm": 72,
+            }
+        },
+    }
+    assert hit_line(doc) == (
+        "r/shooter · shooter · Shooter · "
+        "counter roller, wheel_diameter_mm=72, adjustable"
+    )
+
+
+def test_kb_get_shows_team_and_source_compactly(kb):
+    text = call_kb_tool("kb_get", {"id": "cb-strong"}, kb).content[0].text
+    assert "team: 1234 Test Team" in text
+    assert "{'number'" not in text

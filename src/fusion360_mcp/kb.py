@@ -24,7 +24,7 @@ from pathlib import Path
 
 KINDS = ("robot", "mechanism", "idea", "rule", "book")
 # Bump when parsing or the schema changes, so existing indexes rebuild.
-INDEX_VERSION = "2"
+INDEX_VERSION = "3"
 
 # Words teams use for the same thing. Each group expands to all its members.
 SYNONYMS = [
@@ -165,7 +165,8 @@ def _doc_from_markdown(path: Path, rel: Path) -> dict | None:
         parent = book
     else:
         return None
-    kind = meta.get("kind") if meta.get("kind") in KINDS else kind
+    # robot.md is always the robot card; a mechanism-only source entry says so
+    # in `entry`, not `kind`.
     rating = meta.get("rating") if isinstance(meta.get("rating"), dict) else {}
     source = meta.get("source")
     site = source.get("site") if isinstance(source, dict) else source

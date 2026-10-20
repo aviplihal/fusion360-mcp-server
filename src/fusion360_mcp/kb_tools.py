@@ -118,13 +118,42 @@ def _knowledge_base() -> KnowledgeBase:
 
 # ── formatting ───────────────────────────────────────────────────────
 
-_SKIP_META = {"id", "title", "name", "kind", "facets", "rating", "mechanisms", "ideas"}
+_SKIP_META = {
+    "id",
+    "title",
+    "name",
+    "kind",
+    "facets",
+    "rating",
+    "mechanisms",
+    "ideas",
+    "render",
+    "reviewed",
+    "team",
+    "source",
+}
+
+# The facets that best describe each mechanism type, shown first in hit lines.
+KEY_FACETS = {
+    "drivetrain": ["drive_type", "wheel", "gear_ratio"],
+    "intake": ["intake_type", "deploy", "passes_to"],
+    "shooter": ["shooter_type", "wheel_diameter_mm", "hood"],
+    "turret": ["drive", "actuator", "bearing"],
+    "transfer": ["method", "capacity", "sensing"],
+    "claw": ["actuation", "grip", "dof"],
+    "power_transmission": ["switching", "purpose", "outputs"],
+}
 
 
-def _facet_summary(meta: dict, n: int = 3) -> str:
+def _facet_summary(meta: dict, mtype: str | None, n: int = 3) -> str:
     facets = meta.get("facets") if isinstance(meta.get("facets"), dict) else {}
+    facets = {k: v for k, v in facets.items() if v not in (None, "", "other")}
+    order = [k for k in KEY_FACETS.get(mtype or "", []) if k in facets]
+    order += [k for k in facets if k not in order]
+    # Numbers mean nothing without their name ("72"), so label them.
     return ", ".join(
-        str(v) for v in list(v for v in facets.values() if v not in (None, ""))[:n]
+        f"{k}={facets[k]}" if isinstance(facets[k], (int, float)) else str(facets[k])
+        for k in order[:n]
     )
 
 
@@ -132,7 +161,7 @@ def hit_line(d: dict) -> str:
     kind, meta = d["kind"], d["meta"]
     parts = [d["id"]]
     if kind == "mechanism":
-        parts += [d["type"] or "mechanism", d["title"], _facet_summary(meta)]
+        parts += [d["type"] or "mechanism", d["title"], _facet_summary(meta, d["type"])]
     elif kind == "robot":
         parts += ["robot", d["title"], d["season"] or "season ?", d["team"] or "team ?"]
     elif kind == "idea":
@@ -155,6 +184,16 @@ def hit_line(d: dict) -> str:
 def _meta_lines(d: dict) -> list[str]:
     meta = d["meta"]
     lines = []
+    if d.get("team"):
+        lines.append(f"team: {d['team']}")
+    source = meta.get("source")
+    if isinstance(source, dict):
+        lines.append(
+            "source: "
+            + " ".join(str(source[k]) for k in ("site", "url") if source.get(k))
+        )
+    elif source:
+        lines.append(f"source: {source}")
     for key, value in meta.items():
         if key in _SKIP_META or value in (None, "", [], {}):
             continue
