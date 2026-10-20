@@ -2029,13 +2029,18 @@ TOOLS: list[dict] = [
         "description": (
             "Open a design and make it active: 'name' activates an open "
             "document or opens a cloud design from the active project "
-            "(searches 4 folder levels); 'file_path' opens a local .f3d."
+            "(searches 3 folder levels below 'folder', default the project "
+            "root); 'file_path' opens a local .f3d."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "name": {"type": "string"},
                 "file_path": {"type": "string", "description": "Local .f3d"},
+                "folder": {
+                    "type": "string",
+                    "description": "Cloud folder to search from, e.g. FTC/2026",
+                },
             },
         },
     },
@@ -2075,11 +2080,12 @@ TOOLS: list[dict] = [
         "name": "close_document",
         "title": "Close Document",
         "description": (
-            "Close a document (default: active). Refuses unsaved changes "
-            "unless save=true or discard_changes=true."
+            "Close an open document by its exact name (see list_documents). "
+            "Refuses unsaved changes unless save=true or discard_changes=true."
         ),
         "inputSchema": {
             "type": "object",
+            "required": ["name"],
             "properties": {
                 "name": {"type": "string"},
                 "save": {"type": "boolean", "default": False},

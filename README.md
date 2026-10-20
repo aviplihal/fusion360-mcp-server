@@ -294,10 +294,10 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 |------|-------------|
 | `list_documents` | Open documents: name, active, saved, modified |
 | `new_document` | New design document (parametric or direct), made active |
-| `open_document` | Activate an open document, open a cloud design from the active project by name, or a local .f3d |
+| `open_document` | Activate an open document, open a cloud design from the active project by name (optional folder), or a local .f3d |
 | `activate_document` | Switch to an open document |
 | `save_document` | Save to the Fusion cloud (new version, or save-as with name and folder). Confirm with the user first |
-| `close_document` | Close a document; refuses unsaved changes unless save or discard_changes |
+| `close_document` | Close a document by its exact name; refuses unsaved changes unless save or discard_changes |
 
 ### Code Execution
 | Tool | Description |

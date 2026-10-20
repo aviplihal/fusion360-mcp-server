@@ -4707,18 +4707,19 @@ class CommandHandler:
             "modified": doc.isModified,
         }
 
-    def _document(self, name: str = None):
-        """Open document by name (exact, then case-insensitive); active if None."""
+    def _document(self, name: str = None, exact: bool = False):
+        """Open document by name (exact, then case-insensitive unless
+        *exact*); active if None."""
         if name is None:
             doc = self.app.activeDocument
             if doc is None:
                 raise RuntimeError("No active document")
             return doc
         docs = list(self.app.documents)
-        for match in (
-            lambda d: d.name == name,
-            lambda d: d.name.lower() == name.lower(),
-        ):
+        matchers = [lambda d: d.name == name]
+        if not exact:
+            matchers.append(lambda d: d.name.lower() == name.lower())
+        for match in matchers:
             hits = [d for d in docs if match(d)]
             if len(hits) == 1:
                 return hits[0]
@@ -4746,13 +4747,16 @@ class CommandHandler:
         )
         return {**self._doc_info(doc), "design_type": design_type}
 
-    _CLOUD_SEARCH_DEPTH = 4
-    _CLOUD_SEARCH_FILES = 500
+    # Each folder listing is a cloud round trip; keep well under the 30 s
+    # bridge timeout (a miss took 6.6 s on a small project).
+    _CLOUD_SEARCH_DEPTH = 3
+    _CLOUD_SEARCH_FILES = 300
 
-    def _find_cloud_file(self, name: str):
-        """Breadth-first search of the active project for a design by name."""
-        project = self.app.data.activeProject
-        queue, seen, loose = [(project.rootFolder, 0)], 0, None
+    def _find_cloud_file(self, name: str, start=None):
+        """Breadth-first search for a design by name from *start* (default:
+        the active project's root)."""
+        start = start or self.app.data.activeProject.rootFolder
+        queue, seen, loose = [(start, 0)], 0, None
         while queue:
             folder, depth = queue.pop(0)
             for df in folder.dataFiles:
@@ -4767,7 +4771,9 @@ class CommandHandler:
                 queue.extend((f, depth + 1) for f in folder.dataFolders)
         return loose
 
-    def open_document(self, name: str = None, file_path: str = None):
+    def open_document(
+        self, name: str = None, file_path: str = None, folder: str = None
+    ):
         if bool(name) == bool(file_path):
             raise RuntimeError("Pass exactly one of 'name' or 'file_path'")
         if file_path:
@@ -4785,12 +4791,14 @@ class CommandHandler:
             if doc.name == name:
                 doc.activate()
                 return {**self._doc_info(doc), "source": "already_open"}
-        df = self._find_cloud_file(name)
+        start = self._cloud_folder(folder, create=False) if folder else None
+        df = self._find_cloud_file(name, start)
         if df is None:
             project = self.app.data.activeProject.name
             raise RuntimeError(
-                f"No design named '{name}' in project '{project}' (searched "
-                f"{self._CLOUD_SEARCH_DEPTH} folder levels)"
+                f"No design named '{name}' in project '{project}' under "
+                f"'{folder or '/'}' (searched {self._CLOUD_SEARCH_DEPTH} folder "
+                "levels) — pass 'folder' to search deeper"
             )
         doc = self.app.documents.open(df, True)
         return {**self._doc_info(doc), "source": "cloud"}
@@ -4800,12 +4808,14 @@ class CommandHandler:
         doc.activate()
         return self._doc_info(doc)
 
-    def _cloud_folder(self, path: str):
+    def _cloud_folder(self, path: str, create: bool = True):
         """Folder under the active project's root from "FTC/2026", created
-        if missing."""
+        if missing (or an error when *create* is False)."""
         folder = self.app.data.activeProject.rootFolder
         for part in [p for p in (path or "").replace("\\", "/").split("/") if p]:
             sub = folder.dataFolders.itemByName(part)
+            if sub is None and not create:
+                raise RuntimeError(f"Folder '{path}' not found in the active project")
             folder = sub if sub is not None else folder.dataFolders.add(part)
         return folder
 
@@ -4838,9 +4848,11 @@ class CommandHandler:
         }
 
     def close_document(
-        self, name: str = None, save: bool = False, discard_changes: bool = False
+        self, name: str, save: bool = False, discard_changes: bool = False
     ):
-        doc = self._document(name)
+        # Name required and matched exactly: closing the wrong document can
+        # throw away the user's work (Claude.md lesson 17).
+        doc = self._document(name, exact=True)
         doc_name = doc.name
         if save:
             if not doc.isSaved:

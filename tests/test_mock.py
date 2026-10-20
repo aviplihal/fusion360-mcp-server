@@ -413,7 +413,8 @@ class TestMockAssembly:
         assert mock_command("activate_document", {"name": "Robot"})["active"] is True
         saved = mock_command("save_document", {"name": "Bot", "folder": "FTC"})
         assert saved["folder"] == "FTC" and saved["new_version"] is False
-        assert mock_command("close_document", {"save": True})["saved"] is True
+        closed = mock_command("close_document", {"name": "Robot", "save": True})
+        assert closed["saved"] is True
 
     def test_ground_occurrence(self):
         result = mock_command("ground_occurrence", {"occurrence": "Channel:2"})
