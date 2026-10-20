@@ -147,43 +147,63 @@ def _num(s: str):
 
 # Order matters: first rule whose pattern matches the name (then categories) wins.
 _TYPE_RULES = [
-    ("other", r"\bkit\b|\bbundle\b|\bassortment\b"),
-    ("motor", r"^\d{4} series yellow jacket (planetary gear )?motor\b"),
-    ("motor", r"^\d{4} series .*\bmotor\b(?!.*(mount|bracket|cable|plate|clamp))"),
-    ("servo", r"servo(?!.*(hub|horn|block|plate|mount|bracket|cable|extension|"
-     r"programmer|tester|spline|arm|gearbox kit|coupler|case|gear\b|saver))"),
+    ("other", r"\bkit\b|\bbundle\b|\bassortment\b|\bguide\b"),
     ("electronics", r"\b(battery|cable|wire|controller|sensor|switch|camera|"
      r"connector|adaptor|adapter|fuse|charger|receiver|transmitter|bec|led|"
-     r"light|odometry pod|pinpoint|encoder|harness|lead\b)"),
-    ("channel", r"\bchannel\b|\bgorail\b|\bgotube\b"),
-    ("gear", r"\bgear\b(?!box)|\bpinion\b|\bworm\b"),
-    ("pulley", r"\bpulley\b"),
-    ("sprocket", r"\bsprocket\b"),
-    ("wheel", r"\bwheel\b|\btire\b|\bomni\b|\bmecanum\b"),
+     r"light|odometry pod|pinpoint|encoder|harness|lead|board|injector|"
+     r"joystick|recorder|extension|commander|programmer|programming|tuner|"
+     r"reverser|monitor)\b"),
+    ("channel", r"(?<!\d )\bchannel\b|\bgorail\b|\bgotube\b"),
+    ("other", r"\bgearbox\b|\bviper-slide\b|\bv-guide\b"),
+    ("gear", r"\bgear\b|\bpinion\b|\bworm\b"),
+    ("pulley", r"\bpulley\b|\bbelt\b|\bbelt-clamp\b|\bidler\b"),
+    ("sprocket", r"\bsprocket\b|\bchain\b|\bgrid-link\b"),
+    ("wheel", r"\bwheel\b|\btire\b|\bomni\b|\bmecanum\b|\btrack\b|"
+     r"\btank-track\b|\bgrid-track\b|\bgrouser\b|\bflywheel\b|\brim\b"),
     ("bearing", r"\bbearing\b|\bpillow block\b"),
     ("hub", r"\bhub\b"),
     ("shaft", r"\bshaft(ing)?\b(?!.*(spacer|collar|coupler|beam))|\btube\b|"
      r"\btubing\b|\brod\b"),
     ("spacer", r"\bspacer\b|\bstandoff\b|\bshim\b|\bcollar\b"),
     ("hardware", r"\bscrew\b|\bnut\b|\bwasher\b|\bbolt\b|\bspring\b|\bmagnet\b|"
-     r"\bcinch\b|\bgrommet\b|\bthread locker\b|\blubricant\b|\bcoupler\b"),
-    ("bracket", r"\bbracket\b|\bmount\b|\bbeam\b|\bplate\b|\bblock\b|"
-     r"\bgusset\b|\bhinge\b|\badaptor\b|\bbaseplate\b|\bcap\b"),
+     r"\bcinch\b|\bgrommet\b|\bthread locker\b|\blubricant\b|\bcoupler\b|"
+     r"\blinkage\b|\bshock\b|\bend-stop\b|\bcv joint\b|\bpin\b"),
+    ("bracket", r"\bbrackets?\b|\bmount\b|\bbeam\b|\bplate\b|\bblock\b|"
+     r"\bgusset\b|\bhinge\b|\badaptor\b|\bbaseplate\b|\bcap\b|\bframe\b|"
+     r"\bstand\b|\barm\b|\bcontrol-arm\b"),
 ]
 _TYPE_RES = [(t, re.compile(p, re.I)) for t, p in _TYPE_RULES]
 
 # Category-path fallbacks for names the rules miss.
 _CATEGORY_TYPES = [
-    ("MOTION/Motors", "motor"),
-    ("MOTION/Servos", "servo"),
     ("ELECTRONICS", "electronics"),
     ("HARDWARE", "hardware"),
     ("STRUCTURE/Channel", "channel"),
     ("STRUCTURE", "bracket"),
 ]
+# Model-code words after the noun: "Axon MINI Servo MK2", "... Servo V3".
+_MODEL_WORDS = {"mk", "v"}
+
+
+def head_noun(name: str) -> str:
+    """What the product *is*: the name before "(", " with ", " for ", " - "."""
+    head = re.split(r"\(| with | for | - ", name, maxsplit=1)[0]
+    words = [w for w in re.findall(r"[a-z]+", head.lower()) if w not in _MODEL_WORDS]
+    return words[-1] if words else ""
 
 
 def classify(name: str, categories: list[str]) -> str:
+    # Motors and servos only by head noun ("... Planetary Gear Motor", "Dual
+    # Mode Servo"), so mounts, plates and cables "for ... Servos" never count
+    # toward the FTC motor/servo limit. Kits and packs never count either.
+    # Shark/Stingray "Servo Gearbox" units ship with their servo built in.
+    noun = head_noun(name)
+    if re.search(r"\bkit\b|\bpack\b", name, re.I):
+        noun = ""
+    if noun in ("motor", "servo"):
+        return noun
+    if re.search(r"\bservo gearbox\b", name, re.I):
+        return "servo"
     for t, rx in _TYPE_RES:
         if rx.search(name):
             return t
@@ -266,7 +286,9 @@ def hole_pattern(fields: dict[str, str]) -> str:
 
 def row_from_product(p: dict) -> dict | None:
     sku = clean(p.get("sku"))
-    if not sku or sku.lower().startswith("rd-"):  # "see also" redirect entries
+    # "rd-": "see also" redirects; "parent": option groups whose variants are
+    # listed under their own SKUs; "project-": printed guides.
+    if not sku or sku.lower().startswith(("rd-", "parent", "project-")):
         return None
     name = clean(p.get("name"))
     cats = [clean(c) for c in p.get("category") or []]

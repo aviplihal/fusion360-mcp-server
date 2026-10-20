@@ -61,7 +61,7 @@ CREATE TABLE parts (
 );
 """
 
-SKU_RE = re.compile(r"\b(\d{4}-\d{4}-\d{4})\b")
+SKU_RE = re.compile(r"(?<!\d)(\d{4}-\d{4}-\d{4})(?!\d)")
 USER_AGENT = "fusion360-mcp-kb/0.1 (FTC robot CAD; STEP download on first use)"
 
 # ── normalization ────────────────────────────────────────────────────
@@ -74,6 +74,8 @@ _WORD_ALIASES = {
     "aluminium": "aluminum",
     "stainless": "steel",
     "locknut": "nut",
+    "nylock": "nylon",
+    "gusseted": "gusset",
     "nuts": "nut",
     "teeth": "tooth",
     "bearings": "bearing",
@@ -94,6 +96,9 @@ def normalize(name: str) -> tuple[set[str], set[str]]:
     """Name → (number tokens, word tokens)."""
     s = (name or "").lower().replace("®", " ").replace("™", " ")
     s = SKU_RE.sub(" ", s)
+    s = re.sub(r"[ø⌀]", " ", s)
+    # "U-Channel" → "uchannel channel": U beats L, plain "channel" still hits.
+    s = re.sub(r"\b([a-z])-([a-z]+)", r"\1\2 \2", s)
     s = re.sub(r"\s+-\s+", " ", s)
     # 8x14x5mm → 8mm 14mm 5mm ; htd5 → 5mm htd ; 4mm id/13mm od → split
     s = re.sub(
@@ -128,6 +133,13 @@ def norm_text(name: str) -> str:
     return " ".join(sorted(numbers)) + " | " + " ".join(sorted(words))
 
 
+def head_noun(name: str) -> str:
+    """What a part *is*: last word before "(", " - ", " with ", " for "."""
+    head = re.split(r"\(| with | for | - ", (name or "").lower(), maxsplit=1)[0]
+    words = [w for w in re.findall(r"[a-z]+", head) if w not in ("gb", "mk", "v")]
+    return _WORD_ALIASES.get(words[-1], words[-1]) if words else ""
+
+
 def _split_norm(norm: str) -> tuple[set[str], set[str]]:
     nums, _, words = norm.partition(" | ")
     return set(nums.split()), set(words.split())
@@ -143,6 +155,7 @@ def rank_by_name(query: str, rows: list[dict]) -> list[dict]:
     q_nums, q_words = normalize(query)
     if not q_nums and not q_words:
         return []
+    q_noun = head_noun(query)
     scored = []
     for r in rows:
         nums, words = _split_norm(r["norm"])
@@ -151,14 +164,22 @@ def rank_by_name(query: str, rows: list[dict]) -> list[dict]:
         shared = len(q_words & words)
         if q_words and shared == 0:
             continue
-        # Most shared words first, then fewest unmatched words, then shortest.
-        scored.append(((-shared, len(words - q_words), len(r["name"])), r))
+        # Single parts before kits/bundles, then most shared words, same kind
+        # of thing (head noun), fewest unmatched words, shortest name.
+        key = (
+            r.get("type") == "other",
+            -shared,
+            head_noun(r["name"]) != q_noun,
+            len(words - q_words),
+            len(r["name"]),
+        )
+        scored.append((key, r))
     scored.sort(key=lambda x: x[0])
     if not scored:
         return []
-    best = scored[0][0][0]
-    # Keep only matches as good as the best on shared words (no weak tails).
-    return [r for key, r in scored if key[0] == best]
+    best = scored[0][0][:2]
+    # Keep only matches as good as the best (no weak tails).
+    return [r for key, r in scored if key[:2] == best]
 
 
 def match_sku(name: str, rows: list[dict]) -> str | None:
