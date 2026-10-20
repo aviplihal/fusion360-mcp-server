@@ -86,10 +86,13 @@ def union_bbox(
     return mn, mx
 
 
-def boxes_overlap(
-    a: tuple[list[float], list[float]],
-    b: tuple[list[float], list[float]],
-    tol: float = 1e-6,
+def box_contains(
+    outer: tuple[list[float], list[float]],
+    inner: tuple[list[float], list[float]],
+    tol: float = 1e-4,
 ) -> bool:
-    """True if ``(min, max)`` boxes *a* and *b* touch or overlap."""
-    return all(a[0][i] <= b[1][i] + tol and b[0][i] <= a[1][i] + tol for i in range(3))
+    """True if box *inner* lies within box *outer* (to *tol*)."""
+    return all(
+        outer[0][i] - tol <= inner[0][i] and inner[1][i] <= outer[1][i] + tol
+        for i in range(3)
+    )

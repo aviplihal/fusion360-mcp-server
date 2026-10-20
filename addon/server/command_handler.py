@@ -188,6 +188,8 @@ class CommandHandler:
                 "create_as_built_joint": self.create_as_built_joint,
                 "create_rigid_group": self.create_rigid_group,
                 "ground_occurrence": self.ground_occurrence,
+                "find_holes": self.find_holes,
+                "list_faces": self.list_faces,
                 "move_occurrence": self.move_occurrence,
                 "insert_part": self.insert_part,
                 # inspection / analysis
@@ -2546,63 +2548,170 @@ class CommandHandler:
         # report what it actually used.
         return {"created": True, "name": occ.component.name, **self._occ_info(occ)}
 
-    def add_joint(
-        self, component_one: str, component_two: str, joint_type: str = "rigid"
-    ):
-        root = self._root()
-        occ1 = self._occurrence(component_one)
-        occ2 = self._occurrence(component_two)
+    _JOINT_MOTIONS = {
+        "rigid": lambda inp, d: inp.setAsRigidJointMotion(),
+        "revolute": lambda inp, d: inp.setAsRevoluteJointMotion(d.ZAxisJointDirection),
+        "slider": lambda inp, d: inp.setAsSliderJointMotion(d.ZAxisJointDirection),
+        "cylindrical": lambda inp, d: inp.setAsCylindricalJointMotion(
+            d.ZAxisJointDirection
+        ),
+        "pin_slot": lambda inp, d: inp.setAsPinSlotJointMotion(
+            d.ZAxisJointDirection, d.XAxisJointDirection
+        ),
+        "planar": lambda inp, d: inp.setAsPlanarJointMotion(d.ZAxisJointDirection),
+        "ball": lambda inp, d: inp.setAsBallJointMotion(
+            d.ZAxisJointDirection, d.XAxisJointDirection
+        ),
+    }
 
-        joints = root.joints
-        joint_types = {
-            "rigid": adsk.fusion.JointTypes.RigidJointType,
-            "revolute": adsk.fusion.JointTypes.RevoluteJointType,
-            "slider": adsk.fusion.JointTypes.SliderJointType,
-            "cylindrical": adsk.fusion.JointTypes.CylindricalJointType,
-            "pin_slot": adsk.fusion.JointTypes.PinSlotJointType,
-            "planar": adsk.fusion.JointTypes.PlanarJointType,
-            "ball": adsk.fusion.JointTypes.BallJointType,
+    def _set_joint_motion(self, inp, joint_type: str):
+        """Motion about the joint's Z axis (a hole's axis, a face's normal)."""
+        setter = self._JOINT_MOTIONS.get(joint_type)
+        if setter is None:
+            raise RuntimeError(
+                f"Unknown joint type: {joint_type} — use one of "
+                f"{', '.join(self._JOINT_MOTIONS)}"
+            )
+        setter(inp, adsk.fusion.JointDirections)
+
+    def _joint_geometry(self, spec: dict):
+        """(JointGeometry, occurrence) for {"ref": ..., "keypoint": ...}.
+
+        Planar faces default to their center, other faces (holes, shafts)
+        to their start end, edges to their center.
+        """
+        kp_types = adsk.fusion.JointKeyPointTypes
+        keypoints = {
+            "start": kp_types.StartKeyPoint,
+            "end": kp_types.EndKeyPoint,
+            "middle": kp_types.MiddleKeyPoint,
+            "center": kp_types.CenterKeyPoint,
         }
+        entity = self._resolve_ref(spec["ref"])
+        occ = entity.assemblyContext
+        if occ is None:
+            raise RuntimeError(
+                f"Ref '{spec['ref']}' is a root-component body — joints need "
+                "geometry on an occurrence"
+            )
+        kp = spec.get("keypoint")
+        if kp is not None and kp not in keypoints:
+            raise RuntimeError(
+                f"Unknown keypoint '{kp}' — use start, end, middle or center"
+            )
+        jg = adsk.fusion.JointGeometry
+        if isinstance(entity, adsk.fusion.BRepEdge):
+            return jg.createByCurve(entity, keypoints[kp or "center"]), occ
+        if entity.geometry.surfaceType == adsk.core.SurfaceTypes.PlaneSurfaceType:
+            return jg.createByPlanarFace(entity, None, keypoints[kp or "center"]), occ
+        return jg.createByNonPlanarFace(entity, keypoints[kp or "start"]), occ
 
-        jt = joint_types.get(joint_type)
-        if jt is None:
-            raise RuntimeError(f"Unknown joint type: {joint_type}")
+    @staticmethod
+    def _release_from_parent(occ):
+        """Clear isGroundToParent, which is True by default and stops joints
+        between copies of one component from solving ("conflicts with
+        assembly relationships")."""
+        if occ.assemblyContext is None and occ.isGroundToParent:
+            occ.isGroundToParent = False
 
-        # Create joint geometry from origin points.  createByPoint takes a
-        # single point, so pass each origin as a proxy in its occurrence.
-        origin1 = occ1.component.originConstructionPoint.createForAssemblyContext(occ1)
-        origin2 = occ2.component.originConstructionPoint.createForAssemblyContext(occ2)
-        geo1 = adsk.fusion.JointGeometry.createByPoint(origin1)
-        geo2 = adsk.fusion.JointGeometry.createByPoint(origin2)
+    @staticmethod
+    def _joint_health(joint) -> dict:
+        """A joint that can't solve is still created; Fusion only flags it."""
+        tl = joint.timelineObject
+        if tl is None:
+            return {"health": "ok"}
+        names = {0: "ok", 1: "warning", 2: "error"}
+        result = {"health": names.get(tl.healthState, str(tl.healthState))}
+        if tl.healthState != 0:
+            result["warning"] = (tl.errorOrWarningMessage or "").split("\n")[0][:200]
+        return result
 
-        inp = joints.createInput(geo1, geo2)
-        if joint_type == "rigid":
-            inp.setAsRigidJointMotion()
-        joint = joints.add(inp)
+    def add_joint(
+        self,
+        component_one: str = None,
+        component_two: str = None,
+        joint_type: str = "rigid",
+        geometry_one: dict = None,
+        geometry_two: dict = None,
+        offset: float = 0,
+        angle: float = 0,
+        flip: bool = False,
+    ):
+        """Joint occurrence one onto two (one moves).  Each side is a face or
+        edge ref + keypoint, or else the occurrence's origin."""
+        sides = []
+        for name, spec in (
+            (component_one, geometry_one),
+            (component_two, geometry_two),
+        ):
+            if spec:
+                sides.append(self._joint_geometry(spec))
+            elif name:
+                occ = self._occurrence(name)
+                origin = occ.component.originConstructionPoint
+                point = origin.createForAssemblyContext(occ)
+                sides.append((adsk.fusion.JointGeometry.createByPoint(point), occ))
+            else:
+                raise RuntimeError(
+                    "Each side needs component_one/two (origin) or "
+                    "geometry_one/two ({ref, keypoint})"
+                )
+        (geo1, occ1), (geo2, occ2) = sides
+        for occ in (occ1, occ2):
+            self._release_from_parent(occ)
+
+        root = self._root()
+        inp = root.joints.createInput(geo1, geo2)
+        self._set_joint_motion(inp, joint_type)
+        if offset:
+            inp.offset = adsk.core.ValueInput.createByReal(offset)
+        if angle:
+            inp.angle = adsk.core.ValueInput.createByString(f"{angle} deg")
+        inp.isFlipped = bool(flip)
+        joint = root.joints.add(inp)
+
+        box = self._bbox_union(self._all_bodies(occ1))
         return {
             "created": True,
             "joint_name": joint.name,
             "joint_type": joint_type,
             "occurrence_one": occ1.fullPathName,
             "occurrence_two": occ2.fullPathName,
+            **self._joint_health(joint),
+            "moved_bbox": {"min": box[0], "max": box[1]} if box else None,
         }
 
     def create_as_built_joint(
-        self, component_one: str, component_two: str, joint_type: str = "rigid"
+        self,
+        component_one: str,
+        component_two: str,
+        joint_type: str = "rigid",
+        geometry: dict = None,
     ):
         root = self._root()
         occ1 = self._occurrence(component_one)
         occ2 = self._occurrence(component_two)
+        geo = None
+        if geometry:
+            geo, _ = self._joint_geometry(geometry)
+        elif joint_type != "rigid":
+            raise RuntimeError(
+                f"A {joint_type} as-built joint needs 'geometry' "
+                "({ref, keypoint}) to define its axis"
+            )
+        for occ in (occ1, occ2):
+            self._release_from_parent(occ)
 
-        as_built = root.asBuiltJoints
-        inp = as_built.createInput(occ1, occ2, None)
-        joint = as_built.add(inp)
+        inp = root.asBuiltJoints.createInput(occ1, occ2, geo)
+        self._set_joint_motion(inp, joint_type)
+        joint = root.asBuiltJoints.add(inp)
         return {
             "created": True,
             "joint_name": joint.name,
             "joint_type": joint_type,
             "occurrence_one": occ1.fullPathName,
             "occurrence_two": occ2.fullPathName,
+            **self._joint_health(joint),
         }
 
     def create_rigid_group(self, component_names: list, include_children: bool = True):
@@ -2625,6 +2734,152 @@ class CommandHandler:
             "occurrences": names,
         }
 
+    def _faces_with_refs(self, occ):
+        """Yield (ref, face proxy) for *occ* and every occurrence under it."""
+        prefix = occ.fullPathName + "+"
+        occs = [occ] + [
+            o for o in self._root().allOccurrences if o.fullPathName.startswith(prefix)
+        ]
+        for o in occs:
+            for bi in range(o.bRepBodies.count):
+                faces = o.bRepBodies.item(bi).faces
+                for fi in range(faces.count):
+                    yield (
+                        _occ_refs.make_ref(o.fullPathName, bi, "face", fi),
+                        faces.item(fi),
+                    )
+
+    @staticmethod
+    def _r(values, nd: int = 4) -> list:
+        return [round(v, nd) for v in values]
+
+    def find_holes(
+        self,
+        occurrence: str,
+        diameter: float = None,
+        tolerance: float = 0.01,
+        near: list = None,
+        limit: int = 50,
+    ):
+        """Concave cylindrical faces of an occurrence, in assembly coordinates.
+
+        start/end are the exact points add_joint's start/end keypoints use.
+        """
+        occ = self._occurrence(occurrence)
+        jg = adsk.fusion.JointGeometry
+        kp = adsk.fusion.JointKeyPointTypes
+        cyl = adsk.core.SurfaceTypes.CylinderSurfaceType
+        rows, seen, by_d = [], set(), {}
+        for ref, face in self._faces_with_refs(occ):
+            g = face.geometry
+            if g.surfaceType != cyl:
+                continue
+            p = face.pointOnFace
+            _, n = face.evaluator.getNormalAtPoint(p)
+            if not _hole_geom.is_concave_cylinder(
+                (n.x, n.y, n.z),
+                (p.x, p.y, p.z),
+                (g.origin.x, g.origin.y, g.origin.z),
+                (g.axis.x, g.axis.y, g.axis.z),
+            ):
+                continue
+            d = round(2 * g.radius, 4)
+            if diameter is not None and abs(d - diameter) > tolerance:
+                continue
+            s = jg.createByNonPlanarFace(face, kp.StartKeyPoint).origin
+            e = jg.createByNonPlanarFace(face, kp.EndKeyPoint).origin
+            start, end = self._r((s.x, s.y, s.z)), self._r((e.x, e.y, e.z))
+            # A hole split into two half-faces shows up twice.
+            key = (d, tuple(start), tuple(end))
+            if key in seen:
+                continue
+            seen.add(key)
+            length = max(sum((end[i] - start[i]) ** 2 for i in range(3)) ** 0.5, 1e-9)
+            rows.append(
+                {
+                    "ref": ref,
+                    "d": d,
+                    "start": start,
+                    "end": end,
+                    "axis": self._r([(end[i] - start[i]) / length for i in range(3)]),
+                    "length": round(length, 4),
+                }
+            )
+            by_d[d] = by_d.get(d, 0) + 1
+
+        rows = _hole_geom.sort_near(rows, near, "start")
+        return {
+            "occurrence": occ.fullPathName,
+            "count": len(rows),
+            "by_diameter": {str(k): v for k, v in sorted(by_d.items())},
+            "holes": rows[:limit],
+            "truncated": len(rows) > limit,
+        }
+
+    def list_faces(
+        self,
+        occurrence: str,
+        type: str = "planar",
+        near: list = None,
+        limit: int = 50,
+    ):
+        """Planar and/or cylindrical faces with refs, in assembly coordinates.
+
+        Planar faces are largest-first unless *near* is given.
+        """
+        if type not in ("planar", "cylindrical", "all"):
+            raise RuntimeError("type must be planar, cylindrical or all")
+        occ = self._occurrence(occurrence)
+        st = adsk.core.SurfaceTypes
+        rows = []
+        for ref, face in self._faces_with_refs(occ):
+            g = face.geometry
+            p = face.pointOnFace
+            if g.surfaceType == st.PlaneSurfaceType and type in ("planar", "all"):
+                _, n = face.evaluator.getNormalAtPoint(p)
+                c = face.centroid
+                rows.append(
+                    {
+                        "ref": ref,
+                        "type": "planar",
+                        "normal": self._r((n.x, n.y, n.z)),
+                        "center": self._r((c.x, c.y, c.z)),
+                        "area": round(face.area, 4),
+                    }
+                )
+            elif g.surfaceType == st.CylinderSurfaceType and type in (
+                "cylindrical",
+                "all",
+            ):
+                _, n = face.evaluator.getNormalAtPoint(p)
+                o = g.origin
+                rows.append(
+                    {
+                        "ref": ref,
+                        "type": "cylindrical",
+                        "d": round(2 * g.radius, 4),
+                        "axis": self._r((g.axis.x, g.axis.y, g.axis.z)),
+                        "center": self._r((o.x, o.y, o.z)),
+                        "concave": _hole_geom.is_concave_cylinder(
+                            (n.x, n.y, n.z),
+                            (p.x, p.y, p.z),
+                            (o.x, o.y, o.z),
+                            (g.axis.x, g.axis.y, g.axis.z),
+                        ),
+                        "area": round(face.area, 4),
+                    }
+                )
+        if near is None:
+            rows.sort(key=lambda r: -r["area"])
+        else:
+            rows = _hole_geom.sort_near(rows, near, "center")
+        return {
+            "occurrence": occ.fullPathName,
+            "count": len(rows),
+            "faces": rows[:limit],
+            "truncated": len(rows) > limit,
+        }
+
     def ground_occurrence(self, occurrence: str, grounded: bool = True):
         occ = self._occurrence(occurrence)
         occ.isGrounded = bool(grounded)
@@ -2637,9 +2892,7 @@ class CommandHandler:
         m = adsk.core.Matrix3D.create()
         if angle:
             ax = adsk.core.Vector3D.create(*(axis or [0, 0, 1]))
-            m.setToRotation(
-                math.radians(angle), ax, adsk.core.Point3D.create(0, 0, 0)
-            )
+            m.setToRotation(math.radians(angle), ax, adsk.core.Point3D.create(0, 0, 0))
         if translation:
             m.translation = adsk.core.Vector3D.create(*translation)
         return m
@@ -2670,9 +2923,7 @@ class CommandHandler:
         return names
 
     def _parametric(self) -> bool:
-        return (
-            self._design().designType == adsk.fusion.DesignTypes.ParametricDesignType
-        )
+        return self._design().designType == adsk.fusion.DesignTypes.ParametricDesignType
 
     def _add_existing(self, parent_comp, comp, matrix):
         """New occurrence of *comp* at *matrix* (native, in *parent_comp*)."""
@@ -2930,7 +3181,7 @@ class CommandHandler:
         bodies = adsk.core.ObjectCollection.create()
         # (body name, bbox, occurrence path) per input body. Interference
         # results are temporary bodies with no assembly context, so they are
-        # mapped back to occurrences by name + bbox overlap.
+        # mapped back to occurrences whose body box contains the overlap.
         inputs = []
         for name in component_names:
             for b in self._all_bodies(self._occurrence(name)):
@@ -2961,7 +3212,7 @@ class CommandHandler:
                         path
                         for body_name, box, path in inputs
                         if body_name in (one.name, two.name)
-                        and _occ_refs.boxes_overlap(box, overlap)
+                        and _occ_refs.box_contains(box, overlap)
                     }
                 )
                 results.append(

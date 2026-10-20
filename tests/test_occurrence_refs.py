@@ -98,15 +98,19 @@ class TestUnionBbox:
         assert refs.union_bbox(boxes) == ([0, -1, 0], [24, 2, 3])
 
 
-class TestBoxesOverlap:
-    A = ([0, 0, 0], [4, 2, 0.5])
+class TestBoxContains:
+    BODY = ([0, 0, 0], [4, 2, 0.5])
 
-    def test_overlap(self):
-        assert refs.boxes_overlap(self.A, ([1, 0, 0], [5, 2, 0.5]))
+    def test_overlap_region_inside(self):
+        assert refs.box_contains(self.BODY, ([1, 0, 0], [4, 2, 0.5]))
 
-    def test_touching_counts(self):
+    def test_zero_thickness_on_face(self):
         # Coincident faces produce a zero-thickness interference region.
-        assert refs.boxes_overlap(self.A, ([4, 0, 0], [6, 2, 0.5]))
+        assert refs.box_contains(self.BODY, ([4, 0, 0], [4, 2, 0.5]))
+
+    def test_neighbour_that_only_touches(self):
+        # Region past the body's max x: a touching neighbour, not a party.
+        assert not refs.box_contains(self.BODY, ([3.98, 0, 0], [4.02, 2, 0.5]))
 
     def test_apart(self):
-        assert not refs.boxes_overlap(self.A, ([0, 0, 10], [4, 2, 10.5]))
+        assert not refs.box_contains(self.BODY, ([0, 0, 10], [4, 2, 10.5]))

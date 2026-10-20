@@ -4,7 +4,7 @@
 
 Plan with spike results: [docs/plans/assembly-tools.md](docs/plans/assembly-tools.md). Branch: `feat/assembly-tools`.
 
-### PR 1: occurrence names + ground_occurrence (code done, not committed)
+### PR 1: occurrence names + ground_occurrence (done)
 
 Done:
 - `addon/server/occurrence_refs.py` (no adsk, unit-tested in `tests/test_occurrence_refs.py`): `pick_occurrence` (path / occurrence name / unique component name; an ambiguous name lists the candidates), `parse_ref`/`make_ref` (`Channel:2/b0/f37`), `union_bbox`.
@@ -33,6 +33,20 @@ Done (2026-10-19), live-tested in parametric and direct designs, including a rea
 
 Commit status: committed and pushed on `feat/assembly-tools` (PR #1, now covering PR 1 + PR 2). The add-in needs a restart to run it.
 
-### Next: PR 3, find_holes + list_faces + real joint geometry + create_as_built_joint fix
+### PR 3: find_holes + list_faces + joint geometry + create_as_built_joint fix (same branch)
 
-Open spikes: which hole end `join_on_holes` uses, and origin-to-origin joints that don't move the part.
+Done (2026-10-20). **Tier 0 acceptance passed** using only MCP handlers in Fusion: a real STEP plate (grounded) plus 3 copies of a bracket STEP, bolted hole to hole (rigid, rigid at 90°, revolute with 0.05 cm offset). Zero interference, all joints healthy after computeAll.
+- `find_holes(occurrence, diameter?, tolerance, near?, limit)`: concave cylinders (pure `is_concave_cylinder` in hole_geometry.py), start/end = the exact JointGeometry keypoint origins, deduped, `by_diameter` summary. 0.02 s on a 64-face plate.
+- `list_faces(occurrence, type, near?, limit)`: planar (normal, center, area) and cylindrical (d, axis, concave).
+- `add_joint`: optional `geometry_one/two` = {ref, keypoint}, plus offset, angle, flip. All 7 joint types now set their motion (previously only rigid did). Returns `health` (+ `warning`) and `moved_bbox`.
+- `create_as_built_joint`: `joint_type` is now honoured, with `geometry` required for non-rigid types.
+- Joints clear `isGroundToParent` on both occurrences. It's True by default and made joints between copies of one component fail silently (this was PR 1's open item).
+- `check_interference` attributes a hit to the occurrences whose body box *contains* the overlap (it previously also listed parts that merely touched).
+
+Keypoint rule (in the add_joint description): moving `end` → fixed `start` puts the mover on the fixed hole's start side; `start` → `end` puts it on the end side.
+
+Commit status: committed and pushed on `feat/assembly-tools` (PR #1). Restart the add-in to run it.
+
+### Next: Tier 1 (plan build order PR 5): join_on_holes, list_components tree + list_joints, get_bom
+
+Notes for join_on_holes: choose the side from the hole start/end coordinates (rule above) instead of trial-and-error. `undo` inside one execute call didn't remove a joint, so don't rely on undo-and-retry.

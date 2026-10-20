@@ -92,6 +92,8 @@ class TestToolAnnotations:
         from fusion360_mcp.tools import TOOLS
 
         read_only_names = {
+            "find_holes",
+            "list_faces",
             "get_scene_info",
             "get_object_info",
             "get_bounding_box",

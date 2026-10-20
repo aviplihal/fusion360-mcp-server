@@ -369,6 +369,37 @@ class TestMockAssembly:
         assert result["occurrence"] == "Plate:2"
         assert result["translation"] == [5, 0, 0]
 
+    def test_add_joint_with_geometry(self):
+        result = mock_command(
+            "add_joint",
+            {
+                "geometry_one": {"ref": "Channel:2/b0/f37", "keypoint": "end"},
+                "geometry_two": {"ref": "Plate:1/b0/f5", "keypoint": "start"},
+            },
+        )
+        assert result["occurrence_one"] == "Channel:2"
+        assert result["occurrence_two"] == "Plate:1"
+        assert result["health"] == "ok"
+
+    def test_find_holes(self):
+        result = mock_command("find_holes", {"occurrence": "Plate:1", "limit": 2})
+        assert result["count"] == 4
+        assert len(result["holes"]) == 2
+        assert result["truncated"] is True
+        hole = result["holes"][0]
+        assert hole["ref"].startswith("Plate:1/b0/f")
+        assert set(hole) >= {"d", "start", "end", "axis"}
+
+    def test_find_holes_diameter_filter(self):
+        result = mock_command("find_holes", {"occurrence": "Plate:1", "diameter": 0.8})
+        assert result["count"] == 0
+
+    def test_list_faces(self):
+        result = mock_command("list_faces", {"occurrence": "Plate:1", "type": "all"})
+        assert {f["type"] for f in result["faces"]} == {"planar", "cylindrical"}
+        planar = mock_command("list_faces", {"occurrence": "Plate:1"})
+        assert [f["type"] for f in planar["faces"]] == ["planar"]
+
     def test_unground_occurrence(self):
         result = mock_command(
             "ground_occurrence", {"occurrence": "Channel:2", "grounded": False}

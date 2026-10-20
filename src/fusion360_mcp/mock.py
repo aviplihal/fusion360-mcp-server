@@ -356,14 +356,80 @@ def _create_component(p: dict) -> dict:
     return {"created": True, "name": name, "occurrence": occ, "component": name}
 
 
+def _ref_occ(ref: str) -> str:
+    """Occurrence part of a face/edge ref ('Channel:2/b0/f37' -> 'Channel:2')."""
+    return ref.rsplit("/", 2)[0]
+
+
+def _side_occ(p: dict, n: str, default: str) -> str:
+    geo = p.get(f"geometry_{n}")
+    if geo:
+        return _ref_occ(geo["ref"])
+    return _occ_name(p.get(f"component_{n}", default))
+
+
 def _add_joint(p: dict) -> dict:
     return {
         "created": True,
         "joint_name": "Joint_mock",
         "joint_type": p.get("joint_type", "rigid"),
-        "occurrence_one": _occ_name(p.get("component_one", "Comp1")),
-        "occurrence_two": _occ_name(p.get("component_two", "Comp2")),
+        "occurrence_one": _side_occ(p, "one", "Comp1"),
+        "occurrence_two": _side_occ(p, "two", "Comp2"),
+        "health": "ok",
+        "moved_bbox": {"min": [0.0, 0.0, 0.5], "max": [4.0, 2.0, 1.0]},
     }
+
+
+def _find_holes(p: dict) -> dict:
+    occ = _occ_name(p.get("occurrence", "Comp1"))
+    holes = [
+        {
+            "ref": f"{occ}/b0/f{i + 3}",
+            "d": 0.4,
+            "start": [0.4 + 0.8 * i, 0.4, 0.5],
+            "end": [0.4 + 0.8 * i, 0.4, 0.0],
+            "axis": [0.0, 0.0, -1.0],
+            "length": 0.5,
+        }
+        for i in range(4)
+    ]
+    want = p.get("diameter")
+    if want is not None and abs(want - 0.4) > p.get("tolerance", 0.01):
+        holes = []
+    limit = p.get("limit", 50)
+    return {
+        "occurrence": occ,
+        "count": len(holes),
+        "by_diameter": {"0.4": len(holes)} if holes else {},
+        "holes": holes[:limit],
+        "truncated": len(holes) > limit,
+    }
+
+
+def _list_faces(p: dict) -> dict:
+    occ = _occ_name(p.get("occurrence", "Comp1"))
+    faces = [
+        {
+            "ref": f"{occ}/b0/f0",
+            "type": "planar",
+            "normal": [0.0, 0.0, 1.0],
+            "center": [2.0, 1.0, 0.5],
+            "area": 8.0,
+        },
+        {
+            "ref": f"{occ}/b0/f3",
+            "type": "cylindrical",
+            "d": 0.4,
+            "axis": [0.0, 0.0, 1.0],
+            "center": [0.4, 0.4, 0.0],
+            "concave": True,
+            "area": 0.63,
+        },
+    ]
+    kind = p.get("type", "planar")
+    if kind != "all":
+        faces = [f for f in faces if f["type"] == kind]
+    return {"occurrence": occ, "count": len(faces), "faces": faces, "truncated": False}
 
 
 def _list_components(_p: dict) -> dict:
@@ -735,6 +801,7 @@ def _create_as_built_joint(p: dict) -> dict:
         "joint_type": p.get("joint_type", "rigid"),
         "occurrence_one": _occ_name(p.get("component_one", "Comp1")),
         "occurrence_two": _occ_name(p.get("component_two", "Comp2")),
+        "health": "ok",
     }
 
 
@@ -1133,6 +1200,8 @@ _DISPATCH: dict[str, Any] = {
     "create_as_built_joint": _create_as_built_joint,
     "create_rigid_group": _create_rigid_group,
     "ground_occurrence": _ground_occurrence,
+    "find_holes": _find_holes,
+    "list_faces": _list_faces,
     "insert_part": _insert_part,
     "move_occurrence": _move_occurrence,
     # inspection / analysis

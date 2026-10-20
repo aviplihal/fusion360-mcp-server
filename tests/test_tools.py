@@ -142,6 +142,8 @@ def test_expected_tools_present():
         "create_as_built_joint",
         "create_rigid_group",
         "ground_occurrence",
+        "find_holes",
+        "list_faces",
         "insert_part",
         "move_occurrence",
         # inspection / analysis

@@ -190,3 +190,41 @@ class TestCreateHoleCallSite:
             and sub.func.attr == "modelToSketchSpace"
             for sub in ast.walk(added[0])
         ), "sketchPoints.add() must receive the converted point"
+
+
+class TestConcaveCylinder:
+    """A hole's outward normal points at its axis; a boss's points away."""
+
+    AXIS_O = (1.0, 1.0, 0.0)
+    AXIS_D = (0.0, 0.0, 1.0)
+
+    def test_hole(self):
+        point = (1.2, 1.0, 0.25)  # on a r=0.2 cylinder around (1, 1)
+        normal = (-1.0, 0.0, 0.0)  # into the hole, toward the axis
+        assert hole_geometry.is_concave_cylinder(
+            normal, point, self.AXIS_O, self.AXIS_D
+        )
+
+    def test_boss(self):
+        point = (1.2, 1.0, 0.25)
+        normal = (1.0, 0.0, 0.0)
+        assert not hole_geometry.is_concave_cylinder(
+            normal, point, self.AXIS_O, self.AXIS_D
+        )
+
+    def test_unnormalized_tilted_axis(self):
+        # Axis along x (length 5), point offset in +y; hole normal points -y.
+        assert hole_geometry.is_concave_cylinder(
+            (0.0, -1.0, 0.0), (3.0, 0.3, 0.0), (0.0, 0.0, 0.0), (5.0, 0.0, 0.0)
+        )
+
+
+class TestSortNear:
+    def test_none_keeps_order(self):
+        rows = [{"p": [5, 0, 0]}, {"p": [1, 0, 0]}]
+        assert hole_geometry.sort_near(rows, None, "p") == rows
+
+    def test_sorted_by_distance(self):
+        rows = [{"p": [5, 0, 0]}, {"p": [1, 0, 0]}, {"p": [0, 3, 0]}]
+        out = hole_geometry.sort_near(rows, [0, 0, 0], "p")
+        assert [r["p"] for r in out] == [[1, 0, 0], [0, 3, 0], [5, 0, 0]]

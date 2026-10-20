@@ -30,6 +30,9 @@ What the spikes showed:
 | S10 | Timeline names for occurrence items have a leading space (`" Part:1"`). `healthState` is an int enum. | #15 |
 | S12 | ✅ Re-insert (`addExistingComponent` at the target, then `deleteMe` the old one) lasts through computeAll in parametric designs, rotation included. It also works on an import's original occurrence, and the component survives. Cost: the occurrence is renumbered and two timeline items are added. ❌ `SnapshotCmd` executed from the API doesn't capture. | #2, #4 |
 | S13 | Direct designs: `addExistingComponent(comp, m)` composes *m* with the first occurrence's transform, so `transform2 = m` is set afterwards. `isGrounded` raises on sub-component occurrences. | #2, #4 |
+| S14 | ❌→✅ Joints between two copies of one component fail silently (timeline warning "conflicts with assembly relationships", nothing moves) because `isGroundToParent` defaults to True. Setting it False on both fixes it. Copies joined to a different component work regardless. Direct designs don't move parts for joints. | #6, #9 |
+| S15 | ✅ Hole keypoints: start/end = the two circular edge centers, read exactly via `JointGeometry.origin`. Concave test (normal vs radial) separates holes from bosses. Mover `end` → fixed `start` stacks on the start side; `start` → `end` on the end side (zero interference in the live test). All 7 joint motions accept `setAs*JointMotion(ZAxis[, XAxis])`. As-built joints take `JointGeometry` for non-rigid types. | #5, #6, #7, #9 |
+| S16 | Tier 0 acceptance passed (2026-10-20): real STEP plate + 3 bracket copies, rigid/rigid@90°/revolute+offset, zero interference after computeAll. `undo` doesn't remove a just-added joint within one execute call. | #9 |
 | S11 | `execute_code` raises "refers to a deleted Object" when the user code closes the active document, because it reads `design.designType` after running the code. | #14 |
 
 ---

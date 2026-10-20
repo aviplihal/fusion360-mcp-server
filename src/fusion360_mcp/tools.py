@@ -13,6 +13,37 @@ _OCC_NAME = (
     "or a component name used by only one occurrence"
 )
 
+# Joint geometry on one side: a face/edge ref from find_holes / list_faces.
+_JOINT_GEOMETRY = {
+    "type": "object",
+    "required": ["ref"],
+    "properties": {
+        "ref": {
+            "type": "string",
+            "description": "Face or edge ref, e.g. 'Channel:2/b0/f37'",
+        },
+        "keypoint": {
+            "type": "string",
+            "enum": ["start", "end", "middle", "center"],
+            "description": (
+                "Point on it to join at. Holes: start/end are the hole's two "
+                "ends as find_holes reports them (default start). Planar "
+                "faces and edges default to center."
+            ),
+        },
+    },
+}
+
+_JOINT_TYPES = [
+    "rigid",
+    "revolute",
+    "slider",
+    "cylindrical",
+    "pin_slot",
+    "planar",
+    "ball",
+]
+
 TOOLS: list[dict] = [
     # ── scene / query ────────────────────────────────────────────────
     {
@@ -554,25 +585,44 @@ TOOLS: list[dict] = [
     {
         "name": "add_joint",
         "title": "Add Joint",
-        "description": "Add a joint between two occurrences",
+        "description": (
+            "Join occurrence one onto occurrence two; one moves, so two should "
+            "be the grounded or already-placed part. Each side is either "
+            "geometry ({ref, keypoint} from find_holes/list_faces) or, if "
+            "omitted, the occurrence's origin. To bolt parts at holes "
+            "(find_holes): one=end + two=start puts the moving part against "
+            "the fixed hole's start side; one=start + two=end puts it on the "
+            "end side. Pick the side from the start/end coordinates. Motion "
+            "(revolute, slider...) is about the hole axis "
+            "or face normal. Returns health; 'warning' means Fusion couldn't "
+            "solve it and nothing moved."
+        ),
         "inputSchema": {
             "type": "object",
-            "required": ["component_one", "component_two"],
             "properties": {
                 "component_one": {"type": "string", "description": _OCC_NAME},
                 "component_two": {"type": "string", "description": _OCC_NAME},
+                "geometry_one": _JOINT_GEOMETRY,
+                "geometry_two": _JOINT_GEOMETRY,
                 "joint_type": {
                     "type": "string",
-                    "enum": [
-                        "rigid",
-                        "revolute",
-                        "slider",
-                        "cylindrical",
-                        "pin_slot",
-                        "planar",
-                        "ball",
-                    ],
+                    "enum": _JOINT_TYPES,
                     "default": "rigid",
+                },
+                "offset": {
+                    "type": "number",
+                    "default": 0,
+                    "description": "Gap along the joint axis, cm",
+                },
+                "angle": {
+                    "type": "number",
+                    "default": 0,
+                    "description": "Rotation about the joint axis, degrees",
+                },
+                "flip": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Reverse the moving part's direction",
                 },
             },
         },
@@ -1614,8 +1664,9 @@ TOOLS: list[dict] = [
         "name": "create_as_built_joint",
         "title": "Create As-Built Joint",
         "description": (
-            "Create a joint from components' current positions "
-            "(easier than geometric joints)"
+            "Create a joint between two occurrences where they are now, "
+            "without moving them. Non-rigid types need 'geometry' (a face or "
+            "edge ref) to define the axis, e.g. a hole for a revolute pivot."
         ),
         "inputSchema": {
             "type": "object",
@@ -1629,17 +1680,10 @@ TOOLS: list[dict] = [
                 "component_two": {"type": "string", "description": _OCC_NAME},
                 "joint_type": {
                     "type": "string",
-                    "enum": [
-                        "rigid",
-                        "revolute",
-                        "slider",
-                        "cylindrical",
-                        "pin_slot",
-                        "planar",
-                        "ball",
-                    ],
+                    "enum": _JOINT_TYPES,
                     "default": "rigid",
                 },
+                "geometry": _JOINT_GEOMETRY,
             },
         },
     },
@@ -1662,6 +1706,64 @@ TOOLS: list[dict] = [
                     "default": True,
                     "description": ("Include child sub-components"),
                 },
+            },
+        },
+    },
+    {
+        "name": "find_holes",
+        "title": "Find Holes",
+        "description": (
+            "List the holes (concave cylindrical faces) of an occurrence and "
+            "everything under it, in assembly coordinates (cm): ref, diameter "
+            "d, start/end points of the hole axis (the exact points add_joint "
+            "keypoints start/end use), axis and length. Filter by diameter "
+            "(e.g. 0.4 for goBILDA M4 holes) and sort by distance from 'near' "
+            "to keep the list short; by_diameter summarizes all of them."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["occurrence"],
+            "properties": {
+                "occurrence": {"type": "string", "description": _OCC_NAME},
+                "diameter": {"type": "number", "description": "cm"},
+                "tolerance": {"type": "number", "default": 0.01},
+                "near": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Sort by distance from this [x, y, z] (cm)",
+                },
+                "limit": {"type": "integer", "default": 50, "minimum": 1},
+            },
+        },
+    },
+    {
+        "name": "list_faces",
+        "title": "List Faces",
+        "description": (
+            "List an occurrence's faces with refs for add_joint, in assembly "
+            "coordinates (cm). Planar: normal, center, area (largest first). "
+            "Cylindrical: d, axis, center, concave (true = hole)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["occurrence"],
+            "properties": {
+                "occurrence": {"type": "string", "description": _OCC_NAME},
+                "type": {
+                    "type": "string",
+                    "enum": ["planar", "cylindrical", "all"],
+                    "default": "planar",
+                },
+                "near": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Sort by distance from this [x, y, z] (cm)",
+                },
+                "limit": {"type": "integer", "default": 50, "minimum": 1},
             },
         },
     },
@@ -1706,8 +1808,7 @@ TOOLS: list[dict] = [
                 },
                 "parent": {
                     "type": "string",
-                    "description": "Parent occurrence (omit for root). "
-                    + _OCC_NAME,
+                    "description": "Parent occurrence (omit for root). " + _OCC_NAME,
                 },
                 "translation": {
                     "type": "array",
@@ -2545,6 +2646,8 @@ TOOLS: list[dict] = [
 # side-effect profile so MCP clients can auto-approve safe operations.
 
 _READ_ONLY = {
+    "find_holes",
+    "list_faces",
     "get_scene_info",
     "get_object_info",
     "get_bounding_box",
@@ -2564,6 +2667,8 @@ _READ_ONLY = {
 }
 _DESTRUCTIVE = {"delete_all", "delete_parameter"}
 _IDEMPOTENT = {
+    "find_holes",
+    "list_faces",
     "ping",
     "get_scene_info",
     "get_object_info",

@@ -123,7 +123,7 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 2. Stop the add-in in Fusion (Shift+S → Add-Ins → Fusion360MCP → Stop)
 3. Delete the add-in folder from Fusion's AddIns directory
 
-## Available Tools (96)
+## Available Tools (98)
 
 > Tools marked **(2026+)** require a recent Fusion build — they use APIs introduced in the January–July 2026 releases and are live-tested on Fusion 2705 (arm64).
 
@@ -229,12 +229,14 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 | Tool | Description |
 |------|-------------|
 | `create_component` | Create a sub-assembly component |
-| `add_joint` | Joint between two components |
-| `create_as_built_joint` | Joint from current positions |
+| `add_joint` | Joint two occurrences at face/edge refs (e.g. hole to hole) or origins |
+| `create_as_built_joint` | Joint from current positions (non-rigid types take an axis ref) |
 | `create_rigid_group` | Lock components together |
 | `ground_occurrence` | Fix an occurrence in place (or release it) |
 | `insert_part` | Insert a STEP/f3d file as an occurrence; repeat inserts reuse the component |
 | `move_occurrence` | Place an occurrence (absolute or relative) |
+| `find_holes` | Holes of an occurrence with refs and start/end points |
+| `list_faces` | Planar/cylindrical faces of an occurrence with refs |
 
 ### Inspection & Analysis
 | Tool | Description |
