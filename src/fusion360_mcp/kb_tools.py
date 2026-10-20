@@ -8,6 +8,7 @@ from __future__ import annotations
 import mcp.types as types
 
 from .kb import KINDS, VERDICTS, KnowledgeBase
+from .kb_design import FACETS, GENERIC_TYPES, STATUSES, call_design_tool
 
 MECHANISM_TYPES = [
     "drivetrain",
@@ -124,6 +125,144 @@ for _t in KB_TOOLS:
     _t["annotations"] = dict(_ANNOTATIONS)
 _WRITE = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}
 KB_TOOLS[-1]["annotations"] = _WRITE
+
+_BOX = {
+    "type": ["object", "null"],
+    "description": 'Box in robot coordinates, cm: {"min": [x,y,z], "max": [x,y,z]}',
+    "properties": {
+        "min": {"type": "array", "items": {"type": "number"}},
+        "max": {"type": "array", "items": {"type": "number"}},
+    },
+}
+KB_TOOLS += [
+    {
+        "name": "robot_design",
+        "title": "Read or update a robot's design file",
+        "description": (
+            "The robot design file (kb/designs/<robot>/design.md) holds what the "
+            "subsystems agree on: frame (origin at the footprint centre on the "
+            "tiles, +x right, +y front, +z up, cm), and per subsystem its envelope, "
+            "interfaces, motor/servo budget, status and the KB entries it was based "
+            "on. get: the file plus budget totals and problems. create: new file "
+            "from the template. update_subsystem: change only the fields you pass "
+            "(refused if motors or servos total > 8 or the stowed envelope leaves "
+            "the 45.7 cm start cube; give moving parts an `extended` box). "
+            "add_note: an open question for other subsystems (section=log for a "
+            "change-log line). resolve_note: mark the question containing `text` "
+            "answered."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "get",
+                        "create",
+                        "update_subsystem",
+                        "add_note",
+                        "resolve_note",
+                    ],
+                },
+                "robot": {"type": "string", "description": "Robot name, e.g. 'bb1'"},
+                "subsystem": {
+                    "type": "string",
+                    "description": "e.g. drivetrain, intake, transfer, shooter, turret",
+                },
+                "status": {"type": "string", "enum": list(STATUSES)},
+                "component": {
+                    "type": "string",
+                    "description": "Top-level Fusion component name",
+                },
+                "envelope": {
+                    **_BOX,
+                    "description": "Stowed box. " + _BOX["description"],
+                },
+                "extended": {
+                    **_BOX,
+                    "description": "Fully extended box, if it moves out",
+                },
+                "motors": {"type": "integer", "minimum": 0},
+                "servos": {"type": "integer", "minimum": 0},
+                "interfaces": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "where": {"type": "string"},
+                            "provided_by": {"type": "string"},
+                        },
+                        "required": ["name"],
+                    },
+                    "description": "Mount holes, shafts, plates; replaces the list",
+                },
+                "based_on": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "KB entry ids",
+                },
+                "text": {"type": "string", "description": "Note, or text to resolve"},
+                "answer": {"type": "string", "description": "resolve_note: the answer"},
+                "section": {"type": "string", "enum": ["questions", "log"]},
+            },
+            "required": ["action", "robot"],
+        },
+        "annotations": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+        },
+    },
+    {
+        "name": "kb_save_design",
+        "title": "Save an accepted subsystem as our own mechanism card",
+        "description": (
+            "Step 8 of a subsystem session, after the user accepted it and "
+            "robot_design marks it accepted. Writes kb/robots/ours-<robot>/"
+            "<subsystem>.md (and robot.md) so later searches find our design, "
+            "ranked above other teams'. Facets must come from the type's list "
+            "(kb_get any card of that type to see them); notable ≤ 80 words, "
+            "only what differs from normal; brief/decisions/results ≤ 100 words each. "
+            "motors, servos, component and based_on default to the design file."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "robot": {"type": "string"},
+                "subsystem": {"type": "string"},
+                "type": {
+                    "type": "string",
+                    "enum": list(FACETS) + list(GENERIC_TYPES),
+                    "description": "Mechanism type (default: the subsystem name)",
+                },
+                "name": {"type": "string", "description": "Short card title"},
+                "facets": {
+                    "type": "object",
+                    "additionalProperties": {"type": ["string", "number"]},
+                },
+                "notable": {"type": "string", "description": "≤ 80 words"},
+                "materials": {"type": "array", "items": {"type": "string"}},
+                "ideas": {"type": "array", "items": {"type": "string"}},
+                "based_on": {"type": "array", "items": {"type": "string"}},
+                "motors": {"type": "integer", "minimum": 0},
+                "servos": {"type": "integer", "minimum": 0},
+                "brief": {"type": "string", "description": "What the user asked for"},
+                "decisions": {"type": "string", "description": "Choices and why"},
+                "results": {"type": "string", "description": "Check results, issues"},
+                "variant_of": {"type": "string", "description": "Earlier card id"},
+                "summary": {"type": "string", "description": "Robot card summary"},
+            },
+            "required": ["robot", "subsystem", "notable"],
+        },
+        "annotations": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+        },
+    },
+]
+_DESIGN_TOOLS = {"robot_design", "kb_save_design"}
 
 _KB_NAMES = {t["name"] for t in KB_TOOLS}
 _kb: KnowledgeBase | None = None
@@ -305,6 +444,9 @@ def call_kb_tool(
                     f" Did you mean: {', '.join(close)}?" if close else ""
                 )
                 return _result(text, error=True)
+        elif name in _DESIGN_TOOLS:
+            text, error = call_design_tool(name, args, kb.kb_dir)
+            return _result(text, error=error)
         elif name == "kb_feedback":
             ids = kb.add_feedback(
                 list(args.get("entries") or []),
