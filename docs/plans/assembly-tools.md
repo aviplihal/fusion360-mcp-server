@@ -194,6 +194,14 @@ The main FTC helper. It's #6 with good defaults.
 ### #18 `check_robot_rules`
 
 - Lives on the knowledge-base side once #12 and #13 exist. `constraints.json` holds each season's values (starting size cube in inches, motor and servo limits). Don't hard-code the numbers, because they change by season. It calls `get_bounding_box("root")` and `get_bom()` and compares. It can be a prompt or resource in `server.py` rather than an add-in handler, since it needs no new Fusion calls.
+- **Whole robot:** R102 starting cube, R105 box (29 in vertical), R503 ≤ 8 motors and ≤ 8 servos.
+- **One subsystem** (requested 2026-10-20 by the planning session for the per-subsystem workflow in docs/plans/v1.md): `subsystem=<top-level component>` checks
+  1. its bbox inside an `envelope` box,
+  2. no interference with the other top-level components,
+  3. its motor/servo count within a `budget`.
+
+  `envelope` and `budget` are parameters. They come from kb/designs/<robot>/design.md, which lane F of v1.md defines.
+- **Motor/servo detection:** use the `counts_as` column (motor/servo/none) that lane D adds to goBILDA parts.csv. Until it exists, match names such as "Yellow Jacket", "Motor" and "Servo".
 - **Size:** S.
 
 ---
