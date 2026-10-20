@@ -79,7 +79,7 @@ Commit status: merged and pushed on `feat/assembly-tools` (PR #1). Restart the a
 - **Results:** 110 tools, all unit tests pass.
 
 ### Next
-- Merge local `main` (KB work) into this branch. Follow the planning session's steps: untracked kb copies need moving aside first.
+- PR #1 now includes local `main` (KB work, merged 2026-10-20; 587 tests). Push `main` to GitHub before merging PR #1, otherwise the PR shows the KB commits too.
 - #17 pattern occurrences (not requested for now).
 - Join `counts_as` from the goBILDA catalog (feat/kb-parts) with `part_classes.json` after the merges.
 - Check `part_classes.json` servo prefixes.
