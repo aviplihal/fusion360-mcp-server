@@ -3383,7 +3383,8 @@ class CommandHandler:
             comp.attributes.add(group, attr_name, path)
             reused = False
 
-        if parent_occ is not None:
+        # importToTarget2 already returns a proxy in the parent's context.
+        if parent_occ is not None and occ.assemblyContext is None:
             occ = occ.createForAssemblyContext(parent_occ)
         # An import always lands at identity; reuse was placed on insert.
         if not reused and not matrix.isEqualTo(adsk.core.Matrix3D.create()):

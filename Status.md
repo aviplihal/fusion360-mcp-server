@@ -47,6 +47,23 @@ Keypoint rule (in the add_joint description): moving `end` → fixed `start` put
 
 Commit status: committed and pushed on `feat/assembly-tools` (PR #1). Restart the add-in to run it.
 
-### Next: Tier 1 (plan build order PR 5): join_on_holes, list_components tree + list_joints, get_bom
+### PR 4–6 (same branch; built by three parallel agents in worktrees, merged 2026-10-20)
 
-Notes for join_on_holes: choose the side from the hole start/end coordinates (rule above) instead of trial-and-error. `undo` inside one execute call didn't remove a joint, so don't rely on undo-and-retry.
+- **PR 4: `component` parameter (#1).** `create_sketch` and the primitives take `component`. Sketch features build in the sketch's component, and body features build in the body's own component with native entities (spike S17). `_last_sketch` uses the sketch from the last `create_sketch`. Fixed: `create_box_parametric` was using root's plane. Coordinates for a body inside a component (e.g. `create_hole` centers) are now component-local.
+- **PR 5: `join_on_holes`, `list_components` tree, `list_joints`, `get_bom` (#9, #10, #13).**
+  - **join_on_holes:** the side is picked by `pick_join_sides` (pure, in `addon/server/assembly_math.py`) and was correct in 11/11 live joints. It falls back to re-adding the joint flipped when interference is above 0.
+  - **list_components:** part numbers and sources appear once per component under `parts`, to keep the output short.
+  - **get_bom:** reads motor/servo prefixes from `addon/server/part_classes.json`. The servo prefixes are unverified.
+- **PR 6: `set_joint_value`, `get_timeline` (#11, #15).** Joint motion values reset on any recompute. `persist=true` writes `joint.angle`/`offset` instead. Collapsed timeline groups report their worst child's health.
+- **Fixed during the merge:** `insert_part(parent=…)` on a fresh import. `importToTarget2` already returns a proxy, so it no longer calls `createForAssemblyContext` again.
+- **Results:** 465 tests pass and ruff is clean. A smoke test of the merged code in Fusion passed (nested insert, join, set value, list_joints, BOM, tree, component sketch, timeline). Tool count is 103.
+
+Commit status: merged and pushed on `feat/assembly-tools` (PR #1). Restart the add-in to run it.
+
+### Next
+- #14 document handling plus the S11 fix (execute_code fails if user code closes the active document). Test it on its own, since it switches documents.
+- #17 pattern occurrences.
+- #18 `check_robot_rules`, whole robot and one subsystem (requirements in the plan).
+- Check `part_classes.json` servo prefixes.
+- `list_joints` may not include a persisted `angle`/`offset`.
+- Test `join_on_holes` on a real goBILDA channel STEP.
