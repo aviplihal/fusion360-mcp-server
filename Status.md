@@ -20,10 +20,21 @@ Live-tested in Fusion on 2026-10-19 (handler reloaded inside execute_code, throw
 - `check_interference` results are temporary bodies with no assembly context, so occurrences are matched by body name + bbox overlap (`occurrences` list per hit).
 - New hint `JOINT_GROUNDED_FIRST`: the first occurrence of a joint is the one that moves.
 
-Committed and pushed on `feat/assembly-tools` (add-in restarted and smoke-tested). Still needed: open the PR at https://github.com/aviplihal/fusion360-mcp-server/pull/new/feat/assembly-tools (gh CLI not installed here).
+Committed and pushed on `feat/assembly-tools` (add-in restarted and smoke-tested). PR: https://github.com/aviplihal/fusion360-mcp-server/pull/1 (awaiting review).
 
 Open item for PR 3: an origin-to-origin rigid joint gets created but doesn't move the part, even after computeAll. Spike 2's hole-face joint did move it. Check this when replacing origin joints with face geometry.
 
 ### Next: PR 2, `insert_part` + `move_occurrence`
 
 Spike the placement options first (see plan #2 and #4).
+
+## Knowledge base (goal: searchable past robots, mechanisms, ideas, parts and rules for designing FTC robots)
+
+Plan with spike results: [docs/plans/knowledge-base.md](docs/plans/knowledge-base.md). Brief for the robot-ingest agent: [docs/plans/robot-ingest-brief.md](docs/plans/robot-ingest-brief.md). Files only so far (docs/plans/, kb/), not committed; they don't depend on the assembly-tools changes.
+
+Done (2026-10-19):
+- BIOBUZZ competition manual TU05 saved to `kb/rules/2026-27/`, with `constraints.json` (R102, R105, R503, R502, game piece sizes).
+- Spikes: Onshape API, FTC CAD Base and Open Vault catalogs, FTC Scout API, gm0 source and licence (results K1–K11 in the plan).
+- Robot review page (private artifact https://claude.ai/artifact/PDXC2H15BL6hTJwngfY6e2): first robot drafted and approved.
+
+Next: run the ingest brief as a pilot of 10 robots (BIOBUZZ + DECODE), then the user reviews and we adjust the brief.
