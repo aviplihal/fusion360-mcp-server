@@ -25,7 +25,7 @@ from pathlib import Path
 
 KINDS = ("robot", "mechanism", "idea", "rule", "book")
 # Bump when parsing or the schema changes, so existing indexes rebuild.
-INDEX_VERSION = "4"
+INDEX_VERSION = "5"
 
 # Feedback from the user's verdicts on designs built from an entry
 # (kb/feedback.csv): each like +FEEDBACK_STEP, each dislike -FEEDBACK_STEP,
@@ -249,6 +249,10 @@ def _indexed_files(kb_dir: Path) -> list[Path]:
         root = kb_dir / sub
         if root.is_dir():
             files.extend(sorted(root.rglob("*.md")))
+    # Ideas: kb/ideas.csv (from robots) plus one ideas.csv per book (gm0, ...).
+    books = kb_dir / "books"
+    if books.is_dir():
+        files.extend(sorted(books.glob("*/ideas.csv")))
     for name in ("ideas.csv", "feedback.csv"):
         if (kb_dir / name).is_file():
             files.append(kb_dir / name)

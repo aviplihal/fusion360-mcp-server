@@ -408,3 +408,14 @@ def test_kb_feedback_tool_and_hit_line(kb):
         kb,
     )
     assert err.isError
+
+
+def test_ideas_from_a_book_folder_are_indexed(kb_dir):
+    _write(
+        kb_dir / "books" / "gm0" / "ideas.csv",
+        "id,mechanism,text,tags,seen_in,source\n"
+        "g1,intake,Use compliant wheels for a forgiving intake.,,,gm0\n",
+    )
+    kb = KnowledgeBase(kb_dir)
+    assert kb.get("g1")["meta"]["source"] == "gm0"
+    assert kb.stats()["idea"] == 3
