@@ -1,0 +1,17 @@
+---
+id: choosing-servo/09
+title: Choosing a Servo: Recommended Servos
+page: Choosing a Servo
+source: gm0 c81f4c44dc85, CC BY-NC 2.0
+url: https://gm0.org/en/latest/docs/power-and-electronics/servo-guide/choosing-servo.html
+---
+
+**Note:** We do not recommend very low-priced servos. Due to their low strength, they end up requiring multiple replacements over time, negating any cost benefits.
+
+- goBILDA Servos: goBILDA offers a wide variety of servos suited excellently for FTC.
+  - **goBILDA Dual Mode Servos** are very good price to performance/capability servos. They are dual mode, meaning you can program them to either standard or continuous rotation using a goBILDA servo programmer or REV servo programmer. In standard mode, they are rated for up to 300 degrees of range. They come in three gear ratio options: Torque, Speed, and Super Speed. They are rated for a reasonably high total mechanical output power (around 2.7W for the Torque and Speed, and around 3.2W for the Super Speed), and have steel gearboxes.
+  - **goBILDA 5 Turn Servos** are 5 turn variants of their standard Dual Mode servos, which can rotate 5 turns while still tracking position. These servos have high range, making them ideal for use with external gearboxes, but are more expensive and have a lower precision than the normal variants.
+  - **goBILDA Proton Servos** are goBILDA's budget servos, coming in at approximately half the price of the standard Dual Mode servos. They come in two gear ratio options, Torque and Speed. Unlike the Dual Mode servos, these are not programmable, and therefore can not be used as continuous rotation servos. While their total mechanical power output of approximately 0.7W is a fair bit less than the Dual Mode servos, and they only have a 180 degree rotation range, their low price makes them a decent option for low-load mechanisms, and their steel gearboxes greatly reduce the chances of breaking the servos from accidental shock loads compared to other brands' budget servos.
+- REV Robotics V2 Smart Robot Servos: These are similar to the goBILDA Dual Mode servos in price, performance, and capability. They are also dual mode, meaning you can program them to either standard or continuous rotation using a goBILDA servo programmer or REV servo programmer. In standard mode, they are rated for up to 270 degrees of range. They come in two gear ratio options, Balanced and UltraSpeed. The UltraSpeed is rated for a relatively high total mechanical output power of approximately 3.5W, and the Balanced is rated for a somewhat lower output of approximately 2.5W. They have steel gearboxes.
+- Melonbotics Super Servo Plus: This servo is different from the other servos listed here. While considered a continuous rotation servo from a rules and control system perspective, it is essentially a small motor + spur gearbox.  The 1000rpm rated output speed makes it an excellent alternative to large, heavy standard motors for small, high-speed mechanisms such as active intakes.
+- Axon MAX MK2: This is widely considered to be the best high performance servo for FTC. It uses heat-treated stainless steel gears for top-notch reliability, and has a very high rated total mechanical power output of 7.5W (only 0.5W below the 8W limit defined in the Competition Manual). The servo features an analog output wire, allowing you to read the absolute position of the servo. The Axon MK2 servos are also highly programmable with the Programmer MK2, featuring a wide range of adjustable parameters and modes (including standard and continuous rotation modes).
