@@ -1,0 +1,15 @@
+{
+  "_comment": "get_bom counts a component as a class when its part number or name starts with one of these prefixes (case-insensitive). Edit freely; no code change needed.",
+  "motor": [
+    "5202-",
+    "5203-",
+    "5204-",
+    "REV-41-1291",
+    "REV-41-1300",
+    "REV-41-1600"
+  ],
+  "servo": [
+    "2000-0025",
+    "REV-41-1097"
+  ]
+}

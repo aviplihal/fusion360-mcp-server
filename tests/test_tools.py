@@ -146,6 +146,9 @@ def test_expected_tools_present():
         "list_faces",
         "insert_part",
         "move_occurrence",
+        "join_on_holes",
+        "list_joints",
+        "get_bom",
         # inspection / analysis
         "measure_distance",
         "measure_angle",
