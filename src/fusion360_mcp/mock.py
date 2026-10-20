@@ -43,6 +43,9 @@ _MUTATION_MOCKS: frozenset[str] = frozenset(
         "create_cylinder",
         "create_sphere",
         "create_torus",
+        # assembly placement
+        "insert_part",
+        "move_occurrence",
         "thicken_surface",
         "patch_surface",
         "stitch_surfaces",
@@ -383,6 +386,39 @@ def _list_components(_p: dict) -> dict:
             },
         ],
         "count": 3,
+    }
+
+
+def _insert_part(p: dict) -> dict:
+    path = p.get("file_path", "/tmp/part.step")
+    stem = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    name = p.get("name") or stem
+    occ = f"{name}:1"
+    if p.get("parent"):
+        occ = f"{_occ_name(p['parent'])}+{occ}"
+    t = p.get("translation") or [0.0, 0.0, 0.0]
+    return {
+        "occurrence": occ,
+        "component": name,
+        "reused": False,
+        "part_number": stem,
+        "bodies": 1,
+        "child_occurrences": 0,
+        "bbox": {"min": t, "max": [t[0] + 4.8, t[1] + 4.8, t[2] + 33.6]},
+    }
+
+
+def _move_occurrence(p: dict) -> dict:
+    prev = _occ_name(p.get("occurrence", "Comp1"))
+    base, _, num = prev.rpartition(":")
+    occ = f"{base}:{int(num) + 1}" if num.isdigit() else prev
+    t = p.get("translation") or [0.0, 0.0, 0.0]
+    return {
+        "occurrence": occ,
+        "component": base.split("+")[-1],
+        "previous_occurrence": prev,
+        "translation": t,
+        "bbox": {"min": t, "max": [t[0] + 4.8, t[1] + 4.8, t[2] + 33.6]},
     }
 
 
@@ -1097,6 +1133,8 @@ _DISPATCH: dict[str, Any] = {
     "create_as_built_joint": _create_as_built_joint,
     "create_rigid_group": _create_rigid_group,
     "ground_occurrence": _ground_occurrence,
+    "insert_part": _insert_part,
+    "move_occurrence": _move_occurrence,
     # inspection / analysis
     "measure_distance": _measure_distance,
     "measure_angle": _measure_angle,

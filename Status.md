@@ -24,17 +24,15 @@ Committed and pushed on `feat/assembly-tools` (add-in restarted and smoke-tested
 
 Open item for PR 3: an origin-to-origin rigid joint gets created but doesn't move the part, even after computeAll. Spike 2's hole-face joint did move it. Check this when replacing origin joints with face geometry.
 
-### Next: PR 2, `insert_part` + `move_occurrence`
+### PR 2: insert_part + move_occurrence (same branch; merge with PR 1)
 
-Spike the placement options first (see plan #2 and #4).
+Done (2026-10-19), live-tested in parametric and direct designs, including a real STEP plate from ~/Downloads:
+- `insert_part(file_path, name?, parent?, translation?, axis?, angle?)`: .step/.stp/.f3d via `importToTarget2`. The source path is stored as a component attribute, so inserting the same file again reuses the component (3 ms vs ~0.2–0.4 s to import), including in later sessions. `partNumber` = file stem; "(Unsaved)" names are replaced by the stem.
+- `move_occurrence(occurrence, translation?, axis?, angle?, relative?)`: direct designs set transform2. Parametric designs re-insert and delete (transform2 doesn't last there), which renumbers the occurrence, so the tool returns `occurrence` + `previous_occurrence`. It refuses when joints, as-built joints or rigid groups reference the occurrence. Keeps grounded state (top level only).
+- Both are in the mutation sets (deltas). 399 tests pass.
 
-## Knowledge base (goal: searchable past robots, mechanisms, ideas, parts and rules for designing FTC robots)
+Commit status: committed on `feat/assembly-tools`; the add-in needs a restart to run it.
 
-Plan with spike results: [docs/plans/knowledge-base.md](docs/plans/knowledge-base.md). Brief for the robot-ingest agent: [docs/plans/robot-ingest-brief.md](docs/plans/robot-ingest-brief.md). Files only so far (docs/plans/, kb/), not committed; they don't depend on the assembly-tools changes.
+### Next: PR 3, find_holes + list_faces + real joint geometry + create_as_built_joint fix
 
-Done (2026-10-19):
-- BIOBUZZ competition manual TU05 saved to `kb/rules/2026-27/`, with `constraints.json` (R102, R105, R503, R502, game piece sizes).
-- Spikes: Onshape API, FTC CAD Base and Open Vault catalogs, FTC Scout API, gm0 source and licence (results K1–K11 in the plan).
-- Robot review page (private artifact https://claude.ai/artifact/PDXC2H15BL6hTJwngfY6e2): first robot drafted and approved.
-
-Next: run the ingest brief as a pilot of 10 robots (BIOBUZZ + DECODE), then the user reviews and we adjust the brief.
+Open spikes: which hole end `join_on_holes` uses, and origin-to-origin joints that don't move the part.

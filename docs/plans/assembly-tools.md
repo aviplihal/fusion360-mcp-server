@@ -28,6 +28,8 @@ What the spikes showed:
 | S8 | `rectangularPatternFeatures` **accepts occurrences.** Patterning an occurrence 3× made new occurrences `Part:3…`. ✅ | #16 |
 | S9 | Fusion forces component names to be unique (the second `"Part"` became `"Part (1)"`). Today `create_component` returns the name that was *requested*, not the one Fusion actually used. | #3 |
 | S10 | Timeline names for occurrence items have a leading space (`" Part:1"`). `healthState` is an int enum. | #15 |
+| S12 | ✅ Re-insert (`addExistingComponent` at the target, then `deleteMe` the old one) lasts through computeAll in parametric designs, rotation included. It also works on an import's original occurrence, and the component survives. Cost: the occurrence is renumbered and two timeline items are added. ❌ `SnapshotCmd` executed from the API doesn't capture. | #2, #4 |
+| S13 | Direct designs: `addExistingComponent(comp, m)` composes *m* with the first occurrence's transform, so `transform2 = m` is set afterwards. `isGrounded` raises on sub-component occurrences. | #2, #4 |
 | S11 | `execute_code` raises "refers to a deleted Object" when the user code closes the active document, because it reads `design.designType` after running the code. | #14 |
 
 ---

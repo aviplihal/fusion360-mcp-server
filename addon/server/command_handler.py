@@ -89,6 +89,9 @@ class CommandHandler:
             "create_cylinder",
             "create_sphere",
             "create_torus",
+            # assembly placement
+            "insert_part",
+            "move_occurrence",
             # surface / sheet metal (can produce / thicken bodies)
             "thicken_surface",
             "patch_surface",
@@ -185,6 +188,8 @@ class CommandHandler:
                 "create_as_built_joint": self.create_as_built_joint,
                 "create_rigid_group": self.create_rigid_group,
                 "ground_occurrence": self.ground_occurrence,
+                "move_occurrence": self.move_occurrence,
+                "insert_part": self.insert_part,
                 # inspection / analysis
                 "measure_distance": self.measure_distance,
                 "measure_angle": self.measure_angle,
@@ -2624,6 +2629,209 @@ class CommandHandler:
         occ = self._occurrence(occurrence)
         occ.isGrounded = bool(grounded)
         return {**self._occ_info(occ), "grounded": occ.isGrounded}
+
+    @staticmethod
+    def _placement(translation=None, axis=None, angle: float = 0):
+        """Matrix: rotate *angle* deg about *axis* through the origin, then
+        translate (cm)."""
+        m = adsk.core.Matrix3D.create()
+        if angle:
+            ax = adsk.core.Vector3D.create(*(axis or [0, 0, 1]))
+            m.setToRotation(
+                math.radians(angle), ax, adsk.core.Point3D.create(0, 0, 0)
+            )
+        if translation:
+            m.translation = adsk.core.Vector3D.create(*translation)
+        return m
+
+    @staticmethod
+    def _transform_dict(m) -> dict:
+        t = m.translation
+        return {"translation": [round(t.x, 6), round(t.y, 6), round(t.z, 6)]}
+
+    def _attached(self, occ) -> list:
+        """Joint / rigid-group names that reference *occ* or anything under it."""
+        root = self._root()
+        path = occ.fullPathName
+
+        def _hits(o):
+            if o is None:
+                return False
+            p = o.fullPathName
+            return p == path or p.startswith(path + "+")
+
+        names = []
+        for j in list(root.allJoints) + list(root.allAsBuiltJoints):
+            if _hits(j.occurrenceOne) or _hits(j.occurrenceTwo):
+                names.append(j.name)
+        for g in root.allRigidGroups:
+            if any(_hits(o) for o in g.occurrences):
+                names.append(g.name)
+        return names
+
+    def _parametric(self) -> bool:
+        return (
+            self._design().designType == adsk.fusion.DesignTypes.ParametricDesignType
+        )
+
+    def _add_existing(self, parent_comp, comp, matrix):
+        """New occurrence of *comp* at *matrix* (native, in *parent_comp*)."""
+        occ = parent_comp.occurrences.addExistingComponent(comp, matrix)
+        if not self._parametric():
+            # Direct designs compose *matrix* with the first occurrence's
+            # transform; set it explicitly.
+            occ.transform2 = matrix
+        return occ
+
+    def _place(self, occ, matrix):
+        """Give *occ* a lasting transform; returns the (possibly new) occurrence.
+
+        Parametric designs reset Occurrence.transform2 on the next recompute
+        (design.snapshots.add() resets it too), so there the occurrence is
+        re-inserted at *matrix* and the old one deleted.  That renumbers the
+        occurrence (Plate:1 -> Plate:2) and would drop joints, so callers
+        check _attached() first.
+        """
+        native = occ.nativeObject or occ
+        if not self._parametric():
+            native.transform2 = matrix
+            return occ
+
+        parent_ctx = occ.assemblyContext
+        if parent_ctx is None:
+            grounded = native.isGrounded
+            new = self._root().occurrences.addExistingComponent(
+                native.component, matrix
+            )
+            native.deleteMe()
+            new.isGrounded = grounded
+            return new
+        # isGrounded is unavailable on sub-component occurrences.
+        new = parent_ctx.component.occurrences.addExistingComponent(
+            native.component, matrix
+        )
+        native.deleteMe()
+        return new.createForAssemblyContext(parent_ctx)
+
+    def move_occurrence(
+        self,
+        occurrence: str,
+        translation: list = None,
+        axis: list = None,
+        angle: float = 0,
+        relative: bool = False,
+    ):
+        occ = self._occurrence(occurrence)
+        attached = self._attached(occ)
+        if attached:
+            raise RuntimeError(
+                f"Occurrence '{occ.fullPathName}' is held by "
+                f"{', '.join(attached)} — joints position it; delete or "
+                "edit those instead of moving it"
+            )
+
+        native = occ.nativeObject or occ
+        if relative:
+            # Rotate about the occurrence's own origin, then shift.
+            m = native.transform2.copy()
+            if angle:
+                rot = adsk.core.Matrix3D.create()
+                rot.setToRotation(
+                    math.radians(angle),
+                    adsk.core.Vector3D.create(*(axis or [0, 0, 1])),
+                    m.translation.asPoint(),
+                )
+                m.transformBy(rot)
+            if translation:
+                m.transformBy(self._placement(translation))
+        else:
+            m = self._placement(translation, axis, angle)
+
+        previous = occ.fullPathName
+        occ = self._place(occ, m)
+        box = self._bbox_union(self._all_bodies(occ))
+        return {
+            **self._occ_info(occ),
+            "previous_occurrence": previous,
+            **self._transform_dict((occ.nativeObject or occ).transform2),
+            "bbox": {"min": box[0], "max": box[1]} if box else None,
+        }
+
+    _IMPORT_SOURCE_ATTR = ("fusion360mcp", "source")
+
+    def insert_part(
+        self,
+        file_path: str,
+        name: str = None,
+        parent: str = None,
+        translation: list = None,
+        axis: list = None,
+        angle: float = 0,
+    ):
+        """Insert a STEP/f3d file as an occurrence; reuse it if already imported."""
+        path = os.path.abspath(os.path.expanduser(file_path))
+        ext = os.path.splitext(path)[1].lower()
+        if ext not in (".step", ".stp", ".f3d"):
+            raise RuntimeError(
+                f"Unsupported file type '{ext}' — insert_part takes .step, "
+                ".stp or .f3d (use import_mesh for STL/OBJ/3MF)"
+            )
+        if not os.path.exists(path):
+            raise RuntimeError(f"File not found: {path}")
+
+        design = self._design()
+        parent_occ = self._occurrence(parent) if parent else None
+        parent_comp = parent_occ.component if parent_occ else self._root()
+        matrix = self._placement(translation, axis, angle)
+
+        group, attr_name = self._IMPORT_SOURCE_ATTR
+        comp = None
+        for c in design.allComponents:
+            attr = c.attributes.itemByName(group, attr_name)
+            if attr is not None and attr.value == path:
+                comp = c
+                break
+
+        if comp is not None:
+            occ = self._add_existing(parent_comp, comp, matrix)
+            reused = True
+        else:
+            im = self.app.importManager
+            opts = (
+                im.createFusionArchiveImportOptions(path)
+                if ext == ".f3d"
+                else im.createSTEPImportOptions(path)
+            )
+            imported = im.importToTarget2(opts, parent_comp)
+            if imported is None or imported.count == 0:
+                raise RuntimeError(f"Import produced no occurrence: {path}")
+            occ = imported.item(0)
+            comp = occ.component
+            stem = os.path.splitext(os.path.basename(path))[0]
+            # Fusion-exported STEP files come in as "(Unsaved) (n)".
+            if name:
+                comp.name = name
+            elif comp.name.startswith("(Unsaved)"):
+                comp.name = stem
+            comp.partNumber = stem
+            comp.attributes.add(group, attr_name, path)
+            reused = False
+
+        if parent_occ is not None:
+            occ = occ.createForAssemblyContext(parent_occ)
+        # An import always lands at identity; reuse was placed on insert.
+        if not reused and not matrix.isEqualTo(adsk.core.Matrix3D.create()):
+            occ = self._place(occ, matrix)
+
+        box = self._bbox_union(self._all_bodies(occ))
+        return {
+            **self._occ_info(occ),
+            "reused": reused,
+            "part_number": comp.partNumber,
+            "bodies": comp.bRepBodies.count,
+            "child_occurrences": occ.childOccurrences.count,
+            "bbox": {"min": box[0], "max": box[1]} if box else None,
+        }
 
     # ------------------------------------------------------------------
     # Inspection / Analysis

@@ -344,6 +344,31 @@ class TestMockAssembly:
         assert result["component"] == "Channel"
         assert result["grounded"] is True
 
+    def test_insert_part(self):
+        result = mock_command(
+            "insert_part",
+            {"file_path": "/parts/1120-0001-0336.step", "translation": [1, 2, 3]},
+        )
+        assert result["occurrence"] == "1120-0001-0336:1"
+        assert result["part_number"] == "1120-0001-0336"
+        assert result["reused"] is False
+        assert result["bbox"]["min"] == [1, 2, 3]
+
+    def test_insert_part_named_into_parent(self):
+        result = mock_command(
+            "insert_part",
+            {"file_path": "/p/x.step", "name": "Channel", "parent": "Drive:1"},
+        )
+        assert result["occurrence"] == "Drive:1+Channel:1"
+
+    def test_move_occurrence_renumbers(self):
+        result = mock_command(
+            "move_occurrence", {"occurrence": "Plate:1", "translation": [5, 0, 0]}
+        )
+        assert result["previous_occurrence"] == "Plate:1"
+        assert result["occurrence"] == "Plate:2"
+        assert result["translation"] == [5, 0, 0]
+
     def test_unground_occurrence(self):
         result = mock_command(
             "ground_occurrence", {"occurrence": "Channel:2", "grounded": False}

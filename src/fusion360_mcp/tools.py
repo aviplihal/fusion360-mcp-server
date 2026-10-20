@@ -1681,6 +1681,87 @@ TOOLS: list[dict] = [
             },
         },
     },
+    {
+        "name": "insert_part",
+        "title": "Insert Part",
+        "description": (
+            "Insert a STEP (.step/.stp) or Fusion (.f3d) file as a new "
+            "occurrence, e.g. a goBILDA channel. Inserting the same file again "
+            "reuses the already-imported component (fast), so screws and "
+            "standoffs can be added many times. Optional placement: rotate "
+            "'angle' degrees about 'axis' through the origin, then translate "
+            "(cm). Returns the occurrence name to use in joints."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["file_path"],
+            "properties": {
+                "file_path": {"type": "string", "description": "Absolute path"},
+                "name": {
+                    "type": "string",
+                    "description": (
+                        "Component name for a first import (default: the "
+                        "file's own name). Ignored when reused."
+                    ),
+                },
+                "parent": {
+                    "type": "string",
+                    "description": "Parent occurrence (omit for root). "
+                    + _OCC_NAME,
+                },
+                "translation": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "[x, y, z] in cm",
+                },
+                "axis": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "default": [0, 0, 1],
+                },
+                "angle": {"type": "number", "default": 0, "description": "Degrees"},
+            },
+        },
+    },
+    {
+        "name": "move_occurrence",
+        "title": "Move Occurrence",
+        "description": (
+            "Position an occurrence (component instance). Absolute by default: "
+            "rotate 'angle' degrees about 'axis' through the origin, then "
+            "translate (cm). relative=true rotates about the occurrence's own "
+            "origin and shifts from where it is. In parametric designs the "
+            "occurrence is re-inserted, so its number changes (Plate:1 -> "
+            "Plate:2): use the returned name. Refuses if joints hold it."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["occurrence"],
+            "properties": {
+                "occurrence": {"type": "string", "description": _OCC_NAME},
+                "translation": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "[x, y, z] in cm",
+                },
+                "axis": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "default": [0, 0, 1],
+                },
+                "angle": {"type": "number", "default": 0, "description": "Degrees"},
+                "relative": {"type": "boolean", "default": False},
+            },
+        },
+    },
     # ── inspection / analysis ──────────────────────────────────────────
     {
         "name": "measure_distance",
