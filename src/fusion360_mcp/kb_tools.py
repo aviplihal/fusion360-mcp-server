@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import mcp.types as types
 
+from . import kb_parts
 from .kb import KINDS, VERDICTS, KnowledgeBase
 from .kb_design import FACETS, GENERIC_TYPES, STATUSES, call_design_tool
 
@@ -264,6 +265,55 @@ KB_TOOLS += [
 ]
 _DESIGN_TOOLS = {"robot_design", "kb_save_design"}
 
+KB_TOOLS.append(
+    {
+        "name": "kb_find_part",
+        "title": "Find a goBILDA part",
+        "description": (
+            "Find real goBILDA parts by SKU, name or exact filters, and get a local "
+            "STEP file for insert_part. `name` takes free text ('104mm mecanum "
+            "wheel') or a part name from another team's CAD ('Sonic Hub - 8mm REX "
+            "(GB)', '... 5203-2402-0019'); every number in it (104mm, 20t, 6000rpm) "
+            "must match exactly. Lengths match exactly unless you give "
+            "length_tol_mm. One line per part: sku · name · type · key dims · "
+            "mass · STEP status. download=true fetches the STEP file of the single "
+            "matching part (once; cached) and returns its path."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "sku": {"type": "string", "description": "e.g. '1309-0016-4008'"},
+                "name": {"type": "string", "description": "Free text or CAD name"},
+                "type": {"type": "string", "enum": list(kb_parts.PART_TYPES)},
+                "series": {"type": "string", "description": "e.g. '1120', '5203'"},
+                "counts_as": {
+                    "type": "string",
+                    "enum": list(kb_parts.COUNTS_AS),
+                    "description": "For the 8 motor / 8 servo rule",
+                },
+                "length_mm": {"type": "number"},
+                "length_tol_mm": {"type": "number", "minimum": 0, "default": 0},
+                "download": {
+                    "type": "boolean",
+                    "description": "Download the STEP file (needs exactly 1 match)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50,
+                    "default": 10,
+                },
+            },
+        },
+        # Only download=true writes, and only to the STEP cache.
+        "annotations": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+        },
+    }
+)
+
 _KB_NAMES = {t["name"] for t in KB_TOOLS}
 _kb: KnowledgeBase | None = None
 
@@ -415,6 +465,36 @@ def format_doc(d: dict) -> str:
 # ── dispatch ─────────────────────────────────────────────────────────
 
 
+def _find_part(kb: KnowledgeBase, args: dict) -> types.CallToolResult:
+    filters = {k: args.get(k) for k in ("sku", "name", "type", "series", "counts_as")}
+    if not any(filters.values()) and args.get("length_mm") is None:
+        return _result("Give a sku, name or at least one filter.", error=True)
+    length = args.get("length_mm")
+    parts = kb.find_parts(
+        **filters,
+        length_mm=float(length) if length is not None else None,
+        length_tol_mm=float(args.get("length_tol_mm") or 0),
+        limit=int(args.get("limit") or 10),
+    )
+    if not parts:
+        return _result(
+            "No parts match. Numbers must match exactly: drop one or add length_tol_mm."
+        )
+    if args.get("download"):
+        if len(parts) != 1:
+            return _result(
+                f"download needs exactly 1 match, got {len(parts)}; pass the sku.\n"
+                + "\n".join(kb_parts.part_line(p) for p in parts),
+                error=True,
+            )
+        try:
+            path = kb_parts.download_step(parts[0]["sku"], parts[0]["step_url"])
+        except (OSError, ValueError) as exc:
+            return _result(f"kb_find_part: STEP download failed: {exc}", error=True)
+        return _result(f"{kb_parts.part_line(parts[0])}\nSTEP file: {path}")
+    return _result("\n".join(kb_parts.part_line(p) for p in parts))
+
+
 def call_kb_tool(
     name: str, arguments: dict | None, kb: KnowledgeBase | None = None
 ) -> types.CallToolResult:
@@ -444,6 +524,8 @@ def call_kb_tool(
                     f" Did you mean: {', '.join(close)}?" if close else ""
                 )
                 return _result(text, error=True)
+        elif name == "kb_find_part":
+            return _find_part(kb, args)
         elif name in _DESIGN_TOOLS:
             text, error = call_design_tool(name, args, kb.kb_dir)
             return _result(text, error=error)

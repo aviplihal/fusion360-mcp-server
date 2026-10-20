@@ -12,3 +12,4 @@ build/
 .worktrees
 kb/.index.sqlite
 .cache/
+kb/parts/.cache/

@@ -208,7 +208,7 @@ def test_missing_folder_explains_the_env_var(tmp_path):
 
 def test_kb_tools_are_separate_from_fusion_tools():
     names = {t["name"] for t in KB_TOOLS}
-    writes = {"kb_feedback", "robot_design", "kb_save_design"}
+    writes = {"kb_feedback", "robot_design", "kb_save_design", "kb_find_part"}
     assert names == {"kb_search", "kb_get"} | writes
     assert not names & {t["name"] for t in TOOLS}
     assert all(is_kb_tool(n) for n in names)
