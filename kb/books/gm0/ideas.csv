@@ -1,0 +1,105 @@
+id,mechanism,text,tags,seen_in,source
+gm0-1,drivetrain,Use 4+ drive motors with planetary gearboxes; spur gearboxes strip under shock loads from wall hits and defense.,motors planetary reliability,,gm0
+gm0-2,drivetrain,Target a free speed of 4.5–6 ft/s; most new-team drivetrains are geared too slow.,gear-ratio speed,,gm0
+gm0-3,drivetrain,"Run 19.2:1 planetary motors 1:1 to 4 in wheels, or 13.7:1 to 3 in wheels, for fast acceleration and high top speed.",gear-ratio mecanum wheels,,gm0
+gm0-4,drivetrain,"Never direct-drive wheels off the gearbox; add a belt, chain or gear stage so impacts don't load the motor shaft.",direct-drive shock-load belt,,gm0
+gm0-5,drivetrain,Prefer belt-driven drivetrain pods; chain needs at least one tensioner per side to stay tight.,belt chain tensioner,,gm0
+gm0-6,drivetrain,Keep parallel-plate drive pods 3 in wide or less to leave maximum room between them for an intake.,parallel-plate packaging intake,,gm0
+gm0-7,drivetrain,"Mount mecanum wheels so rollers form an X seen from above (rhombus from below) for faster, more stable turning.",mecanum roller-orientation,,gm0
+gm0-8,drivetrain,Choose ball-bearing mecanum rollers over bushing rollers; they strafe noticeably better.,mecanum wheels bearings,,gm0
+gm0-9,drivetrain,Use 3–4 in mecanum wheels; 6 in mecanums cost more and give no real performance benefit.,mecanum wheel-size,,gm0
+gm0-10,drivetrain,Add dead-wheel odometry to mecanum drives since roller slip makes drive-encoder localization drift.,odometry mecanum autonomous,,gm0
+gm0-11,drivetrain,Drop the center wheel of a 6WD about 1/8 in so only four wheels touch while turning.,6wd drop-center tank,,gm0
+gm0-12,drivetrain,Use corner omni wheels on a 6WD as an easy kit-built alternative to a drop center for good turning.,6wd omni tank,,gm0
+gm0-13,drivetrain,Avoid four traction wheels on a 4WD; two traction plus two omni wheels balances turning against traction.,4wd scrub omni tank,,gm0
+gm0-14,drivetrain,Keep a 4WD chassis close to square and its weight near 50/50 so it turns predictably.,4wd weight-distribution,,gm0
+gm0-15,drivetrain,Pick H-drive when motors are scarce: it works with 3 or 5 drive motors and keeps strafing.,h-drive motor-budget,,gm0
+gm0-16,drivetrain,Avoid X-drive unless packaging allows; offset omni wheels usually force direct drive and waste frame space.,x-drive packaging,,gm0
+gm0-17,drivetrain,Spring-load dead-wheel pods on a pivot with a spring or rubber band so they always keep floor contact.,odometry dead-wheel spring,,gm0
+gm0-18,drivetrain,"Use REV Through-Bore encoders for dead wheels; they are robust, cheap and easy to wire.",odometry encoder,,gm0
+gm0-19,drivetrain,Three-wheel odometry tracks best in autonomous; two-wheel odometry plus IMU is cheaper but drifts more.,odometry dead-wheel,,gm0
+gm0-20,slide,Aim for more than 18 in of reach and preferably 24 in; some games need 36 in or more.,reach extension,,gm0
+gm0-21,slide,"Mount paired drawer slides facing each other to reduce sag, especially on horizontal extensions.",drawer-slides sag horizontal,,gm0
+gm0-22,slide,Support long horizontal extensions at the end with omni wheels riding the floor to limit sag.,horizontal sag omni,,gm0
+gm0-23,slide,"Use goBILDA Viper slides with goBILDA parts and MiSUMI SAR slides with REV extrusion for smooth, reliable stages.",viper misumi drawer-slides,,gm0
+gm0-24,slide,"Viper steel slides carry more load, so one set can replace two lighter aluminum slides.",viper steel load,,gm0
+gm0-25,slide,Use MGN12 rails for heavy lifts like hanging; a pair can lift a 40 lb robot.,mgn linear-bearing hang,,gm0
+gm0-26,slide,Design aluminum or carbon-tube round-bearing slides so tubes are replaceable; steel balls wear soft tubes.,linear-bearing carbon wear,,gm0
+gm0-27,slide,Prefer continuous rigging for simple string slides; the last stage moves first and the spool needs only low reduction.,rigging continuous string,,gm0
+gm0-28,slide,Use cascade rigging when all stages must move together; stage N moves N times faster than stage 1.,rigging cascade string,,gm0
+gm0-29,slide,"When mixing cascade extension with continuous retraction, make the extension spool N times smaller than the retraction spool.",rigging cascade spool,,gm0
+gm0-30,slide,"Avoid elastic retraction on slides; surgical tubing fights the motor, slows extension and retracts unevenly.",rigging elastic retraction,,gm0
+gm0-31,slide,Route retraction string through the slide stages for horizontal slides; free-floating string is only for vertical slides.,rigging retraction horizontal,,gm0
+gm0-32,slide,Add at least one spring tensioner per slide set to absorb string slack as stage geometry changes.,rigging tensioner spring,,gm0
+gm0-33,slide,Clamp string under a bolt and washer instead of tying knots so tension is quick to adjust.,rigging string tension,,gm0
+gm0-34,slide,Make spools wide enough that string never overlaps itself; overlapping changes diameter and string tension.,spool rigging,,gm0
+gm0-35,slide,Change spool diameter instead of the gearbox to tune slide speed versus torque.,spool gear-ratio speed,,gm0
+gm0-36,slide,Use belt-driven slides to avoid re-tensioning string; belts do not stretch but need thicker stages.,belt rigging slides,,gm0
+gm0-37,slide,Route slide string through 1/8 in PTFE tube with push-to-connect fittings to put the motor away from the slides.,rigging ptfe routing,,gm0
+gm0-38,slide,"Run wires along extensions in drag chain, coil cord, or a self-retracting badge reel for vertical slides.",cable-management wiring extension,,gm0
+gm0-39,slide,"Use lead screws only for slow, high-load moves like hanging or tilting a platform.",lead-screw hang,,gm0
+gm0-40,slide,Drive a slide stage with a servo or motor through a two-bar linkage for a compact horizontal extension.,linkage slides servo,,gm0
+gm0-41,arm,"Drive arms through gear, chain or belt reductions rather than mounting the arm directly on a motor shaft.",reduction arm gearbox,,gm0
+gm0-42,arm,Mount slides on a pivoting arm (pivot extension) to reach both high and far without a separate transfer.,pivot-extension slides transfer,,gm0
+gm0-43,arm,Use a virtual four bar (chain or belt) to keep a claw level through more than 180 degrees of arm travel.,virtual-four-bar claw belt,,gm0
+gm0-44,arm,"Tension a virtual four bar chain with a zip tie, since the chain never wraps fully around the sprocket.",virtual-four-bar chain tension,,gm0
+gm0-45,arm,Make the end sprocket half the size of the fixed one (2:1) for a virtual double-reverse four bar giving straight-line lift.,virtual-four-bar linear-motion,,gm0
+gm0-46,arm,Drive linkages slightly over-center so they lock against backdriving under load.,linkage over-center,,gm0
+gm0-47,arm,Expect linkage speed and force to peak when bars are perpendicular; place the working position there.,linkage design,,gm0
+gm0-48,arm,Use a servo-driven arm on the intake to lift over field barriers and reach down for game pieces.,end-effector servo intake,,gm0
+gm0-49,arm,"Prefer linear slides to multi-axis arms; multi-joint arms add backlash, packaging and control problems.",multi-axis slides,,gm0
+gm0-50,arm,Drive both sides of a double-reverse four bar equally to avoid racking from uneven lifting.,four-bar symmetry,,gm0
+gm0-51,intake,Dedicate at least one motor to the intake; fast intakes (1000–1600 rpm) usually perform best.,motor speed,,gm0
+gm0-52,intake,"Design intakes for ""touch it, own it"": grab game pieces instantly despite misalignment and odd orientations.",design-principle tolerance,,gm0
+gm0-53,intake,Prototype intake geometry with wood and rubber bands before building the final version.,prototype testing,,gm0
+gm0-54,intake,"Make outboard intakes flexible (polycarbonate, spring-loaded) so they bend on impact and spring back.",durability compliance,,gm0
+gm0-55,intake,Limit the intake to the legal possession count so it never picks up one game piece too many.,possession rules,,gm0
+gm0-56,intake,Use clear polycarbonate around the intake so the driver can see the game pieces being controlled.,visibility lexan,,gm0
+gm0-57,intake,Use low-durometer compliant wheels for intakes; softer rubber grips game pieces better.,compliant-wheel durometer,,gm0
+gm0-58,intake,Spring-load the first row of intake wheels and fix the back row so pieces of varying size pass reliably.,compliant-wheel spring-loaded,,gm0
+gm0-59,intake,"Use compliant wheels at lower rpm and higher torque for large flat pieces like cubes, one at a time.",compliant-wheel cubes,,gm0
+gm0-60,intake,Use surgical tubing rollers at 800–1000+ rpm for collecting several small game pieces quickly.,surgical-tubing speed,,gm0
+gm0-61,intake,Stiffen surgical tubing with polyurethane tube inside to run tubing intakes at only 100–250 rpm.,surgical-tubing polyurethane,,gm0
+gm0-62,intake,Rubber-band rollers suit balls; add zip ties to reach smaller balls.,rubber-band balls,,gm0
+gm0-63,intake,Use TPU/NinjaFlex printed flaps for low-rpm or servo-driven intakes if you print well.,tpu 3d-print servo,,gm0
+gm0-64,intake,Use a continuous-rotation servo like the Super Servo Plus for small high-speed intakes and save a motor port.,servo motor-budget,,gm0
+gm0-65,intake,Keep foam rollers and intakes off the floor while driving; dragging parts build static.,static esd,,gm0
+gm0-66,transfer,"Put the outtake bucket directly behind the intake (transferless) for the simplest, fastest transfer.",direct-transfer bucket,,gm0
+gm0-67,transfer,Flip the intake up on a pivot and reverse it to eject into the outtake; it starts folded inside the sizing cube.,flip-up intake sizing,,gm0
+gm0-68,transfer,Run the intake drive coaxially with the flip-up pivot so the motor stays on the chassis.,flip-up coaxial zombie-axle,,gm0
+gm0-69,transfer,Use interleaved forks (grate transfer) between horizontal and vertical slides for near-instant handoff.,grate slides,,gm0
+gm0-70,transfer,Use roller or belt conveyors to buffer several game pieces and move them along complex internal paths.,conveyor buffer,,gm0
+gm0-71,transfer,Align intake and outtake so the transfer moves in straight lines; multi-axis moves add failure points.,alignment simplicity,,gm0
+gm0-72,turret,Put a shooter on a turret to aim without turning the robot.,shooter aiming,,gm0
+gm0-73,turret,Use a center-bearing turret for the simplest build; use thrust or X-contact bearings when axial loads are high.,center-bearing thrust,,gm0
+gm0-74,turret,Avoid lazy-susan turrets under shooters; they handle lateral reaction forces poorly.,lazy-susan shooter,,gm0
+gm0-75,turret,Use a bearing-stack ring turret when game pieces must pass through the center of rotation.,bearing-stack pass-through,,gm0
+gm0-76,turret,Put a small servo turret on the end of an extension to rotate only the end effector.,mini-turret servo end-effector,,gm0
+gm0-77,power_transmission,"Give belts and chains at least 90 degrees of wrap, ideally 180, to prevent skipping.",belt chain wrap,,gm0
+gm0-78,power_transmission,Use goBILDA or Actobotics hole-pattern belt lengths for correct tension with no tensioner.,belt tension center-distance,,gm0
+gm0-79,power_transmission,3D print pulleys to get custom tooth counts cheaply.,belt pulley 3d-print,,gm0
+gm0-80,power_transmission,"Prototype with chain since length is adjustable; switch to belts for the final, quieter build.",chain belt prototype,,gm0
+gm0-81,power_transmission,"Use a chain breaker instead of master links, which can loosen and fail mid-match.",chain reliability,,gm0
+gm0-82,power_transmission,Avoid small sprockets under high load; chain stretches faster on small radii.,chain sprocket stretch,,gm0
+gm0-83,power_transmission,Use gears for big reductions in small spaces; extrusion makes any gear center distance easy.,gears reduction extrusion,,gm0
+gm0-84,power_transmission,Never mesh plastic gears with metal gears; only mesh gears with the same pitch.,gears material pitch,,gm0
+gm0-85,power_transmission,Avoid driving gears from a clamp-mounted motor; small motor slip ruins the mesh.,gears clamp-mount,,gm0
+gm0-86,power_transmission,Use a hex hub strengthener on Delrin gears to keep the bore from stripping.,gears delrin hub,,gm0
+gm0-87,power_transmission,Prefer clamping shaft collars over set-screw collars; set screws loosen and burr the shaft.,shaft-retention collar,,gm0
+gm0-88,power_transmission,Shim between shaft collar and bearing so only the inner race is touched.,shaft-retention bearing,,gm0
+gm0-89,power_transmission,Use a dead axle as a standoff between two plates when powering a single wheel or roller.,dead-axle standoff,,gm0
+gm0-90,power_transmission,"Use a zombie axle to power two mechanisms around one pivot, like an intake on an arm.",zombie-axle coaxial,,gm0
+gm0-91,power_transmission,Face-mount motors with blue Loctite in drivetrains; clamp mounts slip and lose chain or belt tension.,motor-mount face-mount,,gm0
+gm0-92,power_transmission,Load motors below 50% of stall torque for efficiency and lower current draw.,motor current efficiency,,gm0
+gm0-93,claw,"Use a claw only for large, awkward pieces; active intakes beat claws for small game pieces.",claw intake-choice,,gm0
+gm0-94,claw,"Support servo-driven arms and claws with servo blocks so side loads go into the frame, not the servo.",servo servoblock,,gm0
+gm0-95,claw,Drive claw fingers through a linkage around a separate pivot instead of mounting them on the servo spline.,servo linkage,,gm0
+gm0-96,claw,Use steel-gear servos on wrists and claws that see impacts; plastic and brass gears strip.,servo gears durability,,gm0
+gm0-97,other,"Use button-head screws, or socket heads with washers, when fastening plastic parts and servos.",fasteners plastic servo,,gm0
+gm0-98,other,Use nylon locknuts everywhere; plain nuts loosen under vibration.,fasteners locknut,,gm0
+gm0-99,other,Never screw two threaded parts together; pass the screw through a clear hole into a thread or nut.,fasteners threads,,gm0
+gm0-100,other,Check screws are shorter than T-slot depth so they clamp tight instead of bottoming out.,fasteners extrusion,,gm0
+gm0-101,other,"Don't use Loctite on polycarbonate; it cracks the plastic, so use nylon-patch screws instead.",loctite polycarbonate,,gm0
+gm0-102,other,Mount electronics on nonconductive plates like wood and keep sensor wires away from motors.,electronics esd wiring,,gm0
+gm0-103,other,"Keep wires out of pinch points on hinges and arms, leaving slack only where mechanisms move.",wiring cable-management,,gm0
+gm0-104,other,Use a REV Servo Hub at the end of an extension so only power and data run along it.,servo-hub wiring extension,,gm0
