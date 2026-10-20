@@ -1,5 +1,7 @@
 # Status
 
+**Version 1 goal, first-robot test and parallel lanes: [docs/plans/v1.md](docs/plans/v1.md).** **Fusion: Lane A (live tests of #14 documents + #18 check_robot_rules; Lane C paused and agreed). Lane C waits until A releases it.** Onshape calls: Lane C only.
+
 ## Assembly tools (goal: build a full FTC robot without execute_code)
 
 Plan with spike results: [docs/plans/assembly-tools.md](docs/plans/assembly-tools.md). Branch: `feat/assembly-tools`.
@@ -67,3 +69,38 @@ Commit status: merged and pushed on `feat/assembly-tools` (PR #1). Restart the a
 - Check `part_classes.json` servo prefixes.
 - `list_joints` may not include a persisted `angle`/`offset`.
 - Test `join_on_holes` on a real goBILDA channel STEP.
+
+## Knowledge base (goal: searchable past robots, mechanisms, ideas, parts and rules for designing FTC robots)
+
+Plan with spike results: [docs/plans/knowledge-base.md](docs/plans/knowledge-base.md). Ingest brief: [docs/plans/robot-ingest-brief.md](docs/plans/robot-ingest-brief.md). Files only (docs/plans/, kb/, scripts/kb/), not committed; they don't depend on the assembly-tools changes.
+
+Done:
+- 2026-10-19: manual TU05 + `constraints.json`, spikes K1–K11, review page (private artifact https://claude.ai/artifact/PDXC2H15BL6hTJwngfY6e2) with the first robot approved. Manual split per rule (`scripts/kb/split_manual.py`).
+- 2026-10-20, **ingest pilot**: `scripts/kb/build_queue.py` → `kb/ingest/queue.csv` (248 rows: 225 Onshape, 23 non-Onshape skipped). `scripts/kb/onshape_fetch.py` (fetch / tree / parts / render, logs to `kb/ingest/api_calls.csv`, run budget + yearly stop), `scripts/kb/ftcscout.py` (rating), `scripts/kb/queue_status.py`. **10 drafts written to the review page** (status `pending`): 3 BIOBUZZ (18365 robot + drivetrain) and 7 DECODE robots (18365 ×2, 13581, 4410, 23849 ×2, 23511, 25070). 7 entries failed with 403 (documents not public). 69 Onshape calls used (85 this year).
+
+- 2026-10-20, **search code** on branch `feat/kb-search` (worktree `.worktrees/kb-search`, not committed): `src/fusion360_mcp/kb.py` indexes `kb/` into SQLite FTS5 at `kb/.index.sqlite`, rebuilt when a file or `INDEX_VERSION` changes. `kb_tools.py` adds `kb_search` + `kb_get`, handled inside the server (not in `tools.py`, no mock). `tests/test_kb.py` (21 tests, 388 total pass). Checked end to end over MCP stdio on the 149 manual files. Card frontmatter format for the export step is now fixed in the plan (one line per key, JSON for structured values).
+
+- 2026-10-20, **export**: `scripts/kb/export_approved.py` writes approved review-page robots into `kb/robots/<id>/` (robot card + one card per mechanism + ~800 px JPEG renders) and `kb/ideas.csv` (deduplicated, `seen_in`). 7 robots, 34 mechanisms, 24 ideas exported and searchable. Review page v2 adds a per-mechanism Rating (bias). Search fixes committed on `feat/kb-search`.
+- Review round 1 handled: 18365 25-26 Decode re-drafted per the note (drivetrain removed, biases set) and back to pending. Droid Force DECODE V2: the user said to drop that note (it was meant for another chat).
+
+- 2026-10-20: `feat/kb-search` merged into local `main` (fast-forward to 4997f04). Not pushed to GitHub.
+
+- 2026-10-20: `kb_feedback` tool on `feat/kb-search` (not yet in `main`): the user's verdicts on designs built from KB entries move those entries' rank (±0.1 each, 0.7–1.3×), stored in `kb/feedback.csv`.
+
+- 2026-10-20, **Lane E done** (gm0): `feat/kb-gm0` @ ee6b6a7, not merged. `scripts/kb/ingest_gm0.py` (sparse clone of gm0 c81f4c44dc85 into gitignored `.cache/gm0`) → `kb/books/gm0/`: 182 sections (~43k words) from common-mechanisms, hardware-components, power-and-electronics, plus 104 ideas in `kb/books/gm0/ideas.csv`. Re-runs only rewrite changed pages. Follow-ups: ideas lack a link to their source section (needs an optional `ref` column), and some formulas keep `frac{...}`.
+
+- 2026-10-20, **Lane F done** (subsystem workflow): `feat/kb-session` @ 5037144, not merged, 420 tests. New `kb_design.py`; tools `robot_design` (get/create/update_subsystem/add_note/resolve_note on `kb/designs/<robot>/design.md`, enforces ≤8/≤8 and the cube/R105 boxes) and `kb_save_design` (accepted subsystems → `kb/robots/ours-<robot>/`); resources kb://design-rules, kb://lessons, kb://constraints; prompts `work_on_subsystem`, `build_whole_robot`. Drafts `kb/design_rules.md` (all numbers unverified, 10 questions for the team) and `kb/lessons.md`. Plan updated: robot kickoff step assigns envelopes and actuator budgets up front.
+
+- 2026-10-20, **Lane D done** (goBILDA parts): `feat/kb-parts` @ 2be4790, not merged, 440 tests. `scripts/kb/scrape_gobilda.py` (product JSON from 383 category pages, 10 s delay per robots.txt, cache gitignored) → `kb/parts/parts.csv`: 1,698 parts, 1,407 with STEP links, counts_as 43 motors / 52 servos. `kb_find_part` (exact filters + name; `download: true` → `~/.fusion-mcp/step-cache/<sku>.step`). BOM name → SKU matching resolves 778/832 goBILDA-style names (2 known wrong matches; 34 discontinued SKUs return nothing). Open: confirm Shark/Stingray servo gearboxes count as servos; join get_bom with counts_as (part_classes.json stays as fallback).
+
+- 2026-10-20, **KB merged into local `main` (26adb4f)**: feat/kb-search + kb-gm0 + kb-session + kb-parts, plus the KB data (manual, 8 robots, ideas, ingest queue/api_calls/render_urls, scripts, plans). 463 tests; live MCP check of all 6 KB tools, 3 resources and 2 prompts passed. Not pushed to GitHub. The main checkout still has untracked copies of these files; 5e will merge main into feat/assembly-tools with a backup/restore step (instructions sent).
+
+Next for the KB: the user's 10 design-rule answers; more robot reviews (40 approved needed for v1); small glue (get_bom → counts_as; gm0 idea → section link).
+
+- 2026-10-20, **pilot review done**: 7 approved (18365 BIOBUZZ V1 + drivetrain, 13581, 4410, 23849 V2, 23511, 25070), 3 rejected (23849 V1, 18365 DECODE, 18365 Chain Reaction). 18365 BIOBUZZ V1 and Droid Force V2 were re-split with per-mechanism renders from STEP → Fusion (`onshape_fetch.py step`, `scripts/kb/fusion_render.py`). Split rules from the review are in the brief. 135 Onshape calls used in the run (151 this year).
+
+- 2026-10-20, **export done**: 8 approved robots (incl. the Drizzy example) → `kb/robots/` (39 mechanism cards, 4 MB of JPEG renders) and `kb/ideas.csv` (32 ideas), via `scripts/kb/export_approved.py` (the other session's tested script). Renders come from each `kb/ingest/drafts/<id>/draft.json` `render_file`. kb_search on feat/kb-search finds them.
+
+- 2026-10-20, **batch 2 paused** (user asked to stop): run budget 400, 230 calls used (381 this year). 26 robots fetched (31 failed on 403/404, 1 skipped as a field CAD). **16 drafts on the review page.** STEP + Fusion renders are done but not drafted for ORACLE 18603 (`fus-*.png` in its drafts folder) and 4410 ITD V2 (`fus-*.png`). Still to split from their STEP files: Caesar 24331, Clip Bot, NOVA, LSCC 2023, Centerstage 16460 v2, ITD 16460, leagues bot, 8404 ITD. Draft generators: scratchpad make_drafts2.py and make_drafts3.py (not in the repo). Render helper: `scripts/kb/fusion_render.py` (one mechanism per execute_code call keeps each under the 30 s timeout).
+
+Next: Better splits and renders for 4410 and 25070 exist locally but weren't written (both were approved first). Then run batches of ~25 with the new split rules: `queue_status.py next 25`.
