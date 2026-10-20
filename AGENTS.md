@@ -163,6 +163,17 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 |------|-------------|
 | `render_view` | Capture the active viewport as a PNG. Pass `view=iso\|front\|top\|...` to reposition the camera first. Returns an image content block you can visually inspect to validate geometry before committing to more operations. |
 
+## Knowledge base tools (2)
+
+These run inside the MCP server and work without Fusion. They search the `kb/` folder (set `FUSION_MCP_KB_DIR` if the server isn't run from the repo): past FTC robots and their mechanisms, reusable design ideas, the current game manual's rules, and reference books. The SQLite index (`kb/.index.sqlite`) rebuilds itself whenever a file in `kb/` changes.
+
+| Tool | Description |
+|------|-------------|
+| `kb_search` | One line per hit, best first. Filters: `kind` (robot, mechanism, idea, rule, book), `type` (mechanism type), `season`, exact `facets`. Robots from stronger teams (FTC Scout rating) rank higher |
+| `kb_get` | Open one entry by id: a robot with its mechanisms, a mechanism card, an idea, a rule (`R105`) or a book section |
+
+Search before designing a mechanism, and use `kind: "rule"` to check a rule.
+
 ## Response shape
 
 Every tool call returns a dict-shaped result with these conventions — read them instead of guessing whether an operation worked:

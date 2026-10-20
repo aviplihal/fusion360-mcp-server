@@ -22,6 +22,7 @@ from .connection import (
     get_connection,
     reset_connection,
 )
+from .kb_tools import call_kb_tool, get_kb_tool_list, is_kb_tool
 from .mock import mock_command
 from .tools import get_tool_by_name, get_tool_list
 
@@ -186,13 +187,16 @@ def main(mode: str, host: str, port: int) -> int:
 
     @app.list_tools()
     async def list_tools() -> list[types.Tool]:
-        return get_tool_list()
+        return get_tool_list() + get_kb_tool_list()
 
     @app.call_tool()
     async def call_tool(
         name: str,
         arguments: dict,
     ) -> list[types.ContentBlock]:
+        # Knowledge base tools run here, in both modes; Fusion isn't involved.
+        if is_kb_tool(name):
+            return call_kb_tool(name, arguments)
         tool_def = get_tool_by_name(name)
         if not tool_def:
             raise ValueError(f"Unknown tool: {name}")
