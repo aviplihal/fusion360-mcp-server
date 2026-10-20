@@ -160,3 +160,70 @@ class TestDraftFaces:
         assert not _has_silent_except(node), (
             "draft_faces must not use a bare 'except: pass'"
         )
+
+
+def _uses_root_features(node: ast.AST) -> bool:
+    """True if *node* reads ``root.features`` anywhere."""
+    return any(
+        isinstance(n, ast.Attribute)
+        and n.attr == "features"
+        and isinstance(n.value, ast.Name)
+        and n.value.id == "root"
+        for n in ast.walk(node)
+    )
+
+
+class TestModelInsideComponent:
+    """Features must be built in the component that owns their input.
+
+    A sketch made with create_sketch(component=...) lives in that component;
+    building its extrude from root.features would put the feature (and the
+    body) in the wrong place. Body tools build in the body's own component.
+    """
+
+    SKETCH_TOOLS = ("extrude", "revolve", "sweep", "loft", "patch_surface")
+    BODY_TOOLS = (
+        "fillet",
+        "chamfer",
+        "shell",
+        "mirror",
+        "create_hole",
+        "rectangular_pattern",
+        "circular_pattern",
+        "create_thread",
+        "draft_faces",
+        "split_body",
+        "split_face",
+        "offset_faces",
+        "scale_body",
+        "move_body",
+        "thicken_surface",
+        "ruled_surface",
+        "trim_surface",
+        "create_flange",
+        "create_bend",
+        "flat_pattern",
+        "unfold",
+    )
+    PRIMITIVES = ("create_box", "create_cylinder", "create_sphere", "create_torus")
+
+    def test_no_root_features(self):
+        for name in self.SKETCH_TOOLS + self.BODY_TOOLS + self.PRIMITIVES:
+            assert not _uses_root_features(_method(name)), (
+                f"{name} must build through the sketch's or body's component, "
+                "not root.features"
+            )
+
+    def test_body_tools_go_native(self):
+        for name in self.BODY_TOOLS:
+            assert "_native" in _called_attrs(_method(name)), (
+                f"{name} must resolve proxy bodies with self._native()"
+            )
+
+    def test_last_sketch_prefers_create_sketch_result(self):
+        attrs = {
+            n.attr
+            for n in ast.walk(_method("_last_sketch"))
+            if isinstance(n, ast.Attribute)
+        }
+        assert "_last_sketch_obj" in attrs and "isValid" in attrs

@@ -29,7 +29,7 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 ### Sketching
 | Tool | Description |
 |------|-------------|
-| `create_sketch` | New sketch on xy/yz/xz, optional offset |
+| `create_sketch` | New sketch on xy/yz/xz, optional offset; `component` = build inside that occurrence's component |
 | `draw_rectangle` | Rectangle in most recent sketch |
 | `draw_circle` | Circle in most recent sketch |
 | `draw_line` | Line in most recent sketch |
@@ -47,7 +47,7 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 ### Features
 | Tool | Description |
 |------|-------------|
-| `extrude` | Extrude a sketch profile |
+| `extrude` | Extrude a sketch profile (in the sketch's component) |
 | `revolve` | Revolve a profile around an axis |
 | `sweep` | Sweep a profile along a path |
 | `loft` | Loft between two or more profiles |
@@ -78,10 +78,10 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 ### Direct Primitives
 | Tool | Description |
 |------|-------------|
-| `create_box` | Box (via TemporaryBRepManager) |
-| `create_cylinder` | Cylinder |
-| `create_sphere` | Sphere |
-| `create_torus` | Torus |
+| `create_box` | Box (via TemporaryBRepManager) (optional `component`) |
+| `create_cylinder` | Cylinder (optional `component`) |
+| `create_sphere` | Sphere (optional `component`) |
+| `create_torus` | Torus (optional `component`) |
 
 ### Surface Operations
 | Tool | Description |
@@ -224,6 +224,7 @@ Known `error_kind` values: `PROFILE_NOT_CLOSED`, `SKETCH_NOT_FOUND`, `BODY_NOT_F
 - **Keep execute_code under ~15 lines.** Prefer the dedicated tools over execute_code whenever possible.
 - **Name parts by occurrence.** Copies of one part share a component name (`Channel`) but have unique occurrence names (`Channel:1`, `Channel:2`); `list_components` shows them. Assembly tools accept either, and error with the candidates when a component name is ambiguous.
 - **Bolting parts:** `find_holes` on both parts, then `add_joint` with `geometry_one` = moving part's hole, `geometry_two` = fixed part's hole. Moving `end` → fixed `start` lands the mover on the fixed hole's start side; `start` → `end` on its end side. The first occurrence moves, so ground the base part first. Check `health` and `check_interference` afterwards.
+- **Model a part inside its component.** `create_sketch(component="Arm:1")` and the primitives' `component` build there, in the component's own coordinates; extrude/revolve/sweep/loft follow the sketch, and body tools (fillet, shell, create_hole, patterns, …) work in the body's own component and coordinates. Results include `component`.
 - **Units are centimeters.** Fusion's internal API uses cm, not mm.
 - **30-second timeout.** Commands that take longer than 30s will return a timeout error.
 - **body_name preferred over body_index.** Use named lookups when possible.

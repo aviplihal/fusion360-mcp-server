@@ -94,7 +94,11 @@ TOOLS: list[dict] = [
     {
         "name": "create_sketch",
         "title": "Create Sketch",
-        "description": "Create a new sketch on xy/yz/xz plane, optionally offset",
+        "description": (
+            "Create a new sketch on xy/yz/xz plane, optionally offset. With "
+            "component, the sketch uses that component's planes and "
+            "coordinates, and extrude/revolve/sweep build there too"
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -106,6 +110,11 @@ TOOLS: list[dict] = [
                 "z_offset": {
                     "type": "number",
                     "description": "Offset distance from the plane (cm)",
+                },
+                "component": {
+                    "type": "string",
+                    "description": "Build inside this occurrence's component "
+                    "(omit for root). " + _OCC_NAME,
                 },
             },
         },
@@ -1525,6 +1534,11 @@ TOOLS: list[dict] = [
                 "center_x": {"type": "number", "default": 0},
                 "center_y": {"type": "number", "default": 0},
                 "center_z": {"type": "number", "default": 0},
+                "component": {
+                    "type": "string",
+                    "description": "Build inside this occurrence's component "
+                    "(omit for root). " + _OCC_NAME,
+                },
             },
         },
     },
@@ -1608,6 +1622,11 @@ TOOLS: list[dict] = [
                     "default": "z",
                     "description": "Cylinder axis direction",
                 },
+                "component": {
+                    "type": "string",
+                    "description": "Build inside this occurrence's component "
+                    "(omit for root). " + _OCC_NAME,
+                },
             },
         },
     },
@@ -1625,6 +1644,11 @@ TOOLS: list[dict] = [
                 "center_x": {"type": "number", "default": 0},
                 "center_y": {"type": "number", "default": 0},
                 "center_z": {"type": "number", "default": 0},
+                "component": {
+                    "type": "string",
+                    "description": "Build inside this occurrence's component "
+                    "(omit for root). " + _OCC_NAME,
+                },
             },
         },
     },
@@ -1655,6 +1679,11 @@ TOOLS: list[dict] = [
                     "type": "string",
                     "enum": ["x", "y", "z"],
                     "default": "z",
+                },
+                "component": {
+                    "type": "string",
+                    "description": "Build inside this occurrence's component "
+                    "(omit for root). " + _OCC_NAME,
                 },
             },
         },

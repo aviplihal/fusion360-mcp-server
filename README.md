@@ -145,7 +145,7 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 ### Sketching
 | Tool | Description |
 |------|-------------|
-| `create_sketch` | New sketch on xy/yz/xz plane, optional offset |
+| `create_sketch` | New sketch on xy/yz/xz plane, optional offset; `component` builds inside a component |
 | `draw_rectangle` | Rectangle in most recent sketch |
 | `draw_circle` | Circle in most recent sketch |
 | `draw_line` | Line in most recent sketch |
@@ -163,7 +163,7 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 ### Features
 | Tool | Description |
 |------|-------------|
-| `extrude` | Extrude a sketch profile |
+| `extrude` | Extrude a sketch profile (in the sketch's component) |
 | `revolve` | Revolve a profile around an axis |
 | `sweep` | Sweep a profile along a path |
 | `loft` | Loft between two or more profiles |
@@ -195,11 +195,11 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 ### Direct Primitives
 | Tool | Description |
 |------|-------------|
-| `create_box` | Box (via TemporaryBRepManager, history-less) |
+| `create_box` | Box (via TemporaryBRepManager, history-less) (optional `component`) |
 | `create_box_parametric` | History-based box: sketch rectangle + dimensions + extrude. `length`/`width`/`height` accept numbers (cm) or string expressions referencing User Parameters (e.g. `"boxL"`, `"outer - 2*wall_t"`) |
-| `create_cylinder` | Cylinder |
-| `create_sphere` | Sphere |
-| `create_torus` | Torus |
+| `create_cylinder` | Cylinder (optional `component`) |
+| `create_sphere` | Sphere (optional `component`) |
+| `create_torus` | Torus (optional `component`) |
 
 ### Surface Operations
 | Tool | Description |

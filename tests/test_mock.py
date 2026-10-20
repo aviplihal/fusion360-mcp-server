@@ -558,6 +558,25 @@ class TestMockSplines:
         assert result["spline_type"] == "control_points"
 
 
+class TestMockComponentParam:
+    @pytest.mark.parametrize(
+        "tool, params",
+        [
+            ("create_sketch", {"plane": "xy"}),
+            ("create_box", {"length": 1, "width": 1, "height": 1}),
+            ("create_cylinder", {"radius": 1, "height": 1}),
+            ("create_sphere", {"radius": 1}),
+            ("create_torus", {"major_radius": 2, "minor_radius": 0.5}),
+        ],
+    )
+    def test_component_is_echoed(self, tool, params):
+        result = mock_command(tool, {**params, "component": "Arm:1"})
+        assert result["component"] == "Arm:1"
+
+    def test_component_defaults_to_root(self):
+        assert mock_command("create_sketch", {})["component"] == "RootComponent"
+
+
 class TestMockCurveOps:
     def test_offset_curve(self):
         result = mock_command(

@@ -34,6 +34,7 @@ What the spikes showed:
 | S15 | ✅ Hole keypoints: start/end = the two circular edge centers, read exactly via `JointGeometry.origin`. Concave test (normal vs radial) separates holes from bosses. Mover `end` → fixed `start` stacks on the start side; `start` → `end` on the end side (zero interference in the live test). All 7 joint motions accept `setAs*JointMotion(ZAxis[, XAxis])`. As-built joints take `JointGeometry` for non-rigid types. | #5, #6, #7, #9 |
 | S16 | Tier 0 acceptance passed (2026-10-20): real STEP plate + 3 bracket copies, rigid/rigid@90°/revolute+offset, zero interference after computeAll. `undo` doesn't remove a just-added joint within one execute call. | #9 |
 | S11 | `execute_code` raises "refers to a deleted Object" when the user code closes the active document, because it reads `design.designType` after running the code. | #14 |
+| S17 | ✅ (2026-10-20) A fillet on a proxy body works three ways: `root.features` + proxy edges, `comp.features` + proxy edges, `comp.features` + native edges. All three land in the body's component (Fusion re-parents the feature). A cross-component combine (root tool, component target, proxies, `root.features`) also lands in the target's component. `comp.features.baseFeatures` works in a non-active component; primitive coordinates are component-local. `comp.sketches.modelToSketchSpace` takes component coordinates. | #1 |
 
 ---
 
@@ -61,7 +62,7 @@ Helpers in `command_handler.py`:
   - `_sketch_by_name` searches `design.allComponents`.
   - `_construction_plane(plane, comp=None)` and `_construction_axis(axis, comp=None)` take the component.
   - `extrude`, `revolve`, `sweep`, `loft`, `create_hole`: replace `root.features` with `sketch.parentComponent.features`.
-  - `fillet`, `chamfer`, `shell`, `mirror`, `split_*`, `offset_faces`, `draft_faces`, patterns: `comp = body.nativeObject.parentComponent if body.assemblyContext else root`, then pass native entities (body, edges and faces through `.nativeObject`). ❓ Spike: a fillet on a proxy body done from root.features versus native.
+  - `fillet`, `chamfer`, `shell`, `mirror`, `split_*`, `offset_faces`, `draft_faces`, patterns: `comp = body.nativeObject.parentComponent if body.assemblyContext else root`, then pass native entities (body, edges and faces through `.nativeObject`). ✅ S17: both work; native was chosen so planes, axes and selections use the component's own coordinates.
   - `create_box`, `create_cylinder`, `create_sphere`, `create_torus` get `component=None`.
 - **Return** `"component": comp.name` on create_sketch and on every feature tool.
 - **Tests:** schema has `component`; the mock echoes it. Add an AST guard in `test_addon_api_usage.py` that `extrude` no longer references `root.features`.

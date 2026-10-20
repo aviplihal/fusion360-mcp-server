@@ -35,6 +35,8 @@ class CommandHandler:
     def __init__(self):
         self.app = adsk.core.Application.get()
         self.ui = self.app.userInterface
+        # Sketch from the last create_sketch; may live in a sub-component.
+        self._last_sketch_obj = None
 
     # ------------------------------------------------------------------
     # Dispatch
@@ -312,18 +314,38 @@ class CommandHandler:
         return self._design().rootComponent
 
     def _last_sketch(self):
-        root = self._root()
+        """The sketch from the last create_sketch while it is still valid in
+        the active design; otherwise the last sketch in root."""
+        design = self._design()
+        s = self._last_sketch_obj
+        if s is not None and s.isValid and s.parentComponent.parentDesign == design:
+            return s
+        root = design.rootComponent
         if root.sketches.count == 0:
             raise RuntimeError("No sketch available — create one first")
         return root.sketches.item(root.sketches.count - 1)
 
     def _sketch_by_name(self, name: str):
-        root = self._root()
-        for i in range(root.sketches.count):
-            s = root.sketches.item(i)
-            if s.name == name:
+        """Sketch by name in root first, then in every other component."""
+        design = self._design()
+        for comp in [design.rootComponent, *design.allComponents]:
+            s = comp.sketches.itemByName(name)
+            if s is not None:
                 return s
         raise RuntimeError(f"Sketch '{name}' not found")
+
+    def _target_component(self, component: str = None):
+        """Component to build in: the one behind occurrence *component*, or root."""
+        return self._occurrence(component).component if component else self._root()
+
+    @staticmethod
+    def _native(body):
+        """(native body, its component). A body inside a component comes back
+        from _body_by_name as an assembly proxy; features on it are built in
+        its own component from native entities, in component coordinates."""
+        if body.assemblyContext:
+            body = body.nativeObject
+        return body, body.parentComponent
 
     def _body_by_name(self, name: str):
         root = self._root()
@@ -414,24 +436,24 @@ class CommandHandler:
                 bodies.extend(o.bRepBodies)
         return bodies
 
-    def _construction_plane(self, plane: str):
-        root = self._root()
+    def _construction_plane(self, plane: str, comp=None):
+        comp = comp or self._root()
         m = {
-            "xy": root.xYConstructionPlane,
-            "yz": root.yZConstructionPlane,
-            "xz": root.xZConstructionPlane,
+            "xy": comp.xYConstructionPlane,
+            "yz": comp.yZConstructionPlane,
+            "xz": comp.xZConstructionPlane,
         }
         p = m.get(plane)
         if p is None:
             raise RuntimeError(f"Unknown plane '{plane}' — use xy, yz, or xz")
         return p
 
-    def _construction_axis(self, axis: str):
-        root = self._root()
+    def _construction_axis(self, axis: str, comp=None):
+        comp = comp or self._root()
         m = {
-            "x": root.xConstructionAxis,
-            "y": root.yConstructionAxis,
-            "z": root.zConstructionAxis,
+            "x": comp.xConstructionAxis,
+            "y": comp.yConstructionAxis,
+            "z": comp.zConstructionAxis,
         }
         a = m.get(axis)
         if a is None:
@@ -673,21 +695,29 @@ class CommandHandler:
     # Sketch
     # ------------------------------------------------------------------
 
-    def create_sketch(self, plane: str = "xy", z_offset: float = None):
-        root = self._root()
+    def create_sketch(
+        self, plane: str = "xy", z_offset: float = None, component: str = None
+    ):
+        comp = self._target_component(component)
 
         if z_offset is not None and z_offset != 0:
             # Create an offset construction plane
-            planes = root.constructionPlanes
+            planes = comp.constructionPlanes
             plane_input = planes.createInput()
             offset_val = adsk.core.ValueInput.createByReal(z_offset)
-            plane_input.setByOffset(self._construction_plane(plane), offset_val)
+            plane_input.setByOffset(self._construction_plane(plane, comp), offset_val)
             cp = planes.add(plane_input)
-            sketch = root.sketches.add(cp)
+            sketch = comp.sketches.add(cp)
         else:
-            sketch = root.sketches.add(self._construction_plane(plane))
+            sketch = comp.sketches.add(self._construction_plane(plane, comp))
+        self._last_sketch_obj = sketch
 
-        return {"sketch_name": sketch.name, "plane": plane, "z_offset": z_offset}
+        return {
+            "sketch_name": sketch.name,
+            "plane": plane,
+            "z_offset": z_offset,
+            "component": comp.name,
+        }
 
     def draw_rectangle(
         self,
@@ -1011,13 +1041,13 @@ class CommandHandler:
         operation: str = "new_body",
         direction: str = "positive",
     ):
-        root = self._root()
         sketch = self._last_sketch()
         if sketch.profiles.count == 0:
             raise RuntimeError("No profiles in sketch")
         profile = sketch.profiles.item(profile_index)
 
-        ext_feats = root.features.extrudeFeatures
+        comp = sketch.parentComponent
+        ext_feats = comp.features.extrudeFeatures
         ext_input = ext_feats.createInput(profile, self._operation_type(operation))
         dist = adsk.core.ValueInput.createByReal(height)
         if direction == "symmetric":
@@ -1031,6 +1061,7 @@ class CommandHandler:
             "height": height,
             "operation": operation,
             "direction": direction,
+            "component": comp.name,
         }
 
     def revolve(
@@ -1045,11 +1076,11 @@ class CommandHandler:
         axis_direction_z: float = 0,
         operation: str = "new_body",
     ):
-        root = self._root()
         sketch = self._last_sketch()
         if sketch.profiles.count == 0:
             raise RuntimeError("No profiles in sketch")
         profile = sketch.profiles.item(profile_index)
+        comp = sketch.parentComponent
 
         # Determine axis entity first (required for createInput)
         axis_entity = None
@@ -1057,11 +1088,11 @@ class CommandHandler:
         is_y = abs(axis_direction_y) > 0.99 and abs(axis_direction_x) < 0.01
         is_z = abs(axis_direction_z) > 0.99 and abs(axis_direction_x) < 0.01
         if is_x and abs(axis_direction_z) < 0.01:
-            axis_entity = root.xConstructionAxis
+            axis_entity = comp.xConstructionAxis
         elif is_y and abs(axis_direction_z) < 0.01:
-            axis_entity = root.yConstructionAxis
+            axis_entity = comp.yConstructionAxis
         elif is_z and abs(axis_direction_y) < 0.01:
-            axis_entity = root.zConstructionAxis
+            axis_entity = comp.zConstructionAxis
         else:
             # Create construction line in sketch
             origin = adsk.core.Point3D.create(
@@ -1076,7 +1107,7 @@ class CommandHandler:
             line.isConstruction = True
             axis_entity = line
 
-        rev_feats = root.features.revolveFeatures
+        rev_feats = comp.features.revolveFeatures
         rev_input = rev_feats.createInput(
             profile, axis_entity, self._operation_type(operation)
         )
@@ -1085,7 +1116,12 @@ class CommandHandler:
         rev_input.setAngleExtent(False, angle_val)
 
         feat = rev_feats.add(rev_input)
-        return {"feature_name": feat.name, "angle": angle, "operation": operation}
+        return {
+            "feature_name": feat.name,
+            "angle": angle,
+            "operation": operation,
+            "component": comp.name,
+        }
 
     def sweep(
         self,
@@ -1094,8 +1130,8 @@ class CommandHandler:
         path_curve_index: int = 0,
         operation: str = "new_body",
     ):
-        root = self._root()
         sketch = self._last_sketch()
+        comp = sketch.parentComponent
         path_sketch = self._sketch_by_name(path_sketch_name)
 
         if sketch.profiles.count == 0:
@@ -1105,22 +1141,26 @@ class CommandHandler:
         path_curves = list(path_sketch.sketchCurves)
         path_curve = path_curves[path_curve_index]
 
-        path = root.features.createPath(path_curve)
+        path = comp.features.createPath(path_curve)
 
-        sweep_feats = root.features.sweepFeatures
+        sweep_feats = comp.features.sweepFeatures
         sweep_input = sweep_feats.createInput(
             profile, path, self._operation_type(operation)
         )
         feat = sweep_feats.add(sweep_input)
-        return {"feature_name": feat.name, "operation": operation}
+        return {
+            "feature_name": feat.name,
+            "operation": operation,
+            "component": comp.name,
+        }
 
     def loft(self, profile_sketch_names: list, operation: str = "new_body"):
-        root = self._root()
-        loft_feats = root.features.loftFeatures
+        sketches = [self._sketch_by_name(n) for n in profile_sketch_names]
+        comp = sketches[0].parentComponent if sketches else self._root()
+        loft_feats = comp.features.loftFeatures
         loft_input = loft_feats.createInput(self._operation_type(operation))
 
-        for sketch_name in profile_sketch_names:
-            sketch = self._sketch_by_name(sketch_name)
+        for sketch_name, sketch in zip(profile_sketch_names, sketches):
             if sketch.profiles.count == 0:
                 raise RuntimeError(f"No profiles in sketch '{sketch_name}'")
             loft_input.loftSections.add(sketch.profiles.item(0))
@@ -1130,6 +1170,7 @@ class CommandHandler:
             "feature_name": feat.name,
             "operation": operation,
             "profile_count": len(profile_sketch_names),
+            "component": comp.name,
         }
 
     def fillet(
@@ -1140,20 +1181,25 @@ class CommandHandler:
         edge_selection: str = "all",
     ):
         root = self._root()
-        body = (
+        body, comp = self._native(
             self._body_by_name(body_name)
             if body_name
             else root.bRepBodies.item(body_index)
         )
         edges = self._select_edges(body, edge_selection)
 
-        fillets = root.features.filletFeatures
+        fillets = comp.features.filletFeatures
         inp = fillets.createInput()
         inp.addConstantRadiusEdgeSet(
             edges, adsk.core.ValueInput.createByReal(radius), True
         )
         feat = fillets.add(inp)
-        return {"feature_name": feat.name, "radius": radius, "edges_count": edges.count}
+        return {
+            "feature_name": feat.name,
+            "radius": radius,
+            "edges_count": edges.count,
+            "component": comp.name,
+        }
 
     def chamfer(
         self,
@@ -1163,14 +1209,14 @@ class CommandHandler:
         edge_selection: str = "all",
     ):
         root = self._root()
-        body = (
+        body, comp = self._native(
             self._body_by_name(body_name)
             if body_name
             else root.bRepBodies.item(body_index)
         )
         edges = self._select_edges(body, edge_selection)
 
-        chamfers = root.features.chamferFeatures
+        chamfers = comp.features.chamferFeatures
         inp = chamfers.createInput(edges, True)
         inp.setToEqualDistance(adsk.core.ValueInput.createByReal(distance))
         feat = chamfers.add(inp)
@@ -1178,6 +1224,7 @@ class CommandHandler:
             "feature_name": feat.name,
             "distance": distance,
             "edges_count": edges.count,
+            "component": comp.name,
         }
 
     def shell(
@@ -1188,7 +1235,7 @@ class CommandHandler:
         face_selection: str = "top",
     ):
         root = self._root()
-        body = (
+        body, comp = self._native(
             self._body_by_name(body_name)
             if body_name
             else root.bRepBodies.item(body_index)
@@ -1215,7 +1262,7 @@ class CommandHandler:
         if faces.count == 0:
             raise RuntimeError(f"No faces matched '{face_selection}'")
 
-        shells = root.features.shellFeatures
+        shells = comp.features.shellFeatures
         body_coll = adsk.core.ObjectCollection.create()
         body_coll.add(body)
         inp = shells.createInput(body_coll)
@@ -1226,11 +1273,12 @@ class CommandHandler:
             "feature_name": feat.name,
             "thickness": thickness,
             "faces_removed": faces.count,
+            "component": comp.name,
         }
 
     def mirror(self, mirror_plane: str, body_name: str = None, body_index: int = 0):
         root = self._root()
-        body = (
+        body, comp = self._native(
             self._body_by_name(body_name)
             if body_name
             else root.bRepBodies.item(body_index)
@@ -1239,10 +1287,16 @@ class CommandHandler:
         entities = adsk.core.ObjectCollection.create()
         entities.add(body)
 
-        mirrors = root.features.mirrorFeatures
-        inp = mirrors.createInput(entities, self._construction_plane(mirror_plane))
+        mirrors = comp.features.mirrorFeatures
+        inp = mirrors.createInput(
+            entities, self._construction_plane(mirror_plane, comp)
+        )
         feat = mirrors.add(inp)
-        return {"feature_name": feat.name, "mirror_plane": mirror_plane}
+        return {
+            "feature_name": feat.name,
+            "mirror_plane": mirror_plane,
+            "component": comp.name,
+        }
 
     def create_hole(
         self,
@@ -1255,7 +1309,7 @@ class CommandHandler:
         center_y: float = 0,
     ):
         root = self._root()
-        body = (
+        body, comp = self._native(
             self._body_by_name(body_name)
             if body_name
             else root.bRepBodies.item(body_index)
@@ -1301,7 +1355,7 @@ class CommandHandler:
         center_z = _hole_geom.plane_z_at(
             (n.x, n.y, n.z), (o.x, o.y, o.z), center_x, center_y
         )
-        sketch = root.sketches.add(target_face)
+        sketch = comp.sketches.add(target_face)
         sketch_pt = sketch.sketchPoints.add(
             sketch.modelToSketchSpace(
                 adsk.core.Point3D.create(center_x, center_y, center_z)
@@ -1310,7 +1364,7 @@ class CommandHandler:
 
         # createSimpleInput() takes the DIAMETER -- "A ValueInput object that
         # defines the diameter of the hole" -- not the radius.
-        holes = root.features.holeFeatures
+        holes = comp.features.holeFeatures
         hole_input = holes.createSimpleInput(
             adsk.core.ValueInput.createByReal(diameter)
         )
@@ -1329,6 +1383,7 @@ class CommandHandler:
             "cut_bodies": [b.name for b in feat.bodies],
             # Where the request resolved to, not a measurement of the feature.
             "resolved_center": [center_x, center_y, center_z],
+            "component": comp.name,
         }
 
     def rectangular_pattern(
@@ -1339,43 +1394,51 @@ class CommandHandler:
         y_count: int = 1,
         y_spacing: float = 1.0,
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
         bodies = adsk.core.ObjectCollection.create()
         bodies.add(body)
 
-        patterns = root.features.rectangularPatternFeatures
+        patterns = comp.features.rectangularPatternFeatures
         inp = patterns.createInput(
             bodies,
-            root.xConstructionAxis,
+            comp.xConstructionAxis,
             adsk.core.ValueInput.createByReal(x_count),
             adsk.core.ValueInput.createByReal(x_spacing),
             adsk.fusion.PatternDistanceType.SpacingPatternDistanceType,
         )
         inp.setDirectionTwo(
-            root.yConstructionAxis,
+            comp.yConstructionAxis,
             adsk.core.ValueInput.createByReal(y_count),
             adsk.core.ValueInput.createByReal(y_spacing),
         )
         feat = patterns.add(inp)
-        return {"feature_name": feat.name, "x_count": x_count, "y_count": y_count}
+        return {
+            "feature_name": feat.name,
+            "x_count": x_count,
+            "y_count": y_count,
+            "component": comp.name,
+        }
 
     def circular_pattern(
         self, body_name: str, count: int, axis: str = "z", total_angle: float = 360
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
         bodies = adsk.core.ObjectCollection.create()
         bodies.add(body)
 
-        patterns = root.features.circularPatternFeatures
-        inp = patterns.createInput(bodies, self._construction_axis(axis))
+        patterns = comp.features.circularPatternFeatures
+        inp = patterns.createInput(bodies, self._construction_axis(axis, comp))
         inp.quantity = adsk.core.ValueInput.createByReal(count)
         inp.totalAngle = adsk.core.ValueInput.createByString(f"{total_angle} deg")
         feat = patterns.add(inp)
-        return {"feature_name": feat.name, "count": count, "total_angle": total_angle}
+        return {
+            "feature_name": feat.name,
+            "count": count,
+            "total_angle": total_angle,
+            "component": comp.name,
+        }
 
     def create_thread(
         self,
@@ -1389,11 +1452,10 @@ class CommandHandler:
         is_full_length: bool = True,
         thread_length: float = None,
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
         face = body.faces.item(face_index)
 
-        threads = root.features.threadFeatures
+        threads = comp.features.threadFeatures
         thread_data = threads.threadDataQuery
         thread_data.threadType = thread_type
 
@@ -1404,7 +1466,11 @@ class CommandHandler:
             inp.threadLength = adsk.core.ValueInput.createByReal(thread_length)
 
         feat = threads.add(inp)
-        return {"feature_name": feat.name, "thread_type": thread_type}
+        return {
+            "feature_name": feat.name,
+            "thread_type": thread_type,
+            "component": comp.name,
+        }
 
     def draft_faces(
         self,
@@ -1414,21 +1480,25 @@ class CommandHandler:
         pull_direction_plane: str = "xy",
         is_tangent_chain: bool = True,
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
         faces = self._select_faces(body, face_selection)
 
-        drafts = root.features.draftFeatures
+        drafts = comp.features.draftFeatures
         # createInput wants a BRepFace array and three arguments; the angle is
         # set on the input object afterwards, not passed in.
         inp = drafts.createInput(
             [faces.item(i) for i in range(faces.count)],
-            self._construction_plane(pull_direction_plane),
+            self._construction_plane(pull_direction_plane, comp),
             is_tangent_chain,
         )
         inp.setSingleAngle(False, adsk.core.ValueInput.createByString(f"{angle} deg"))
         feat = drafts.add(inp)
-        return {"feature_name": feat.name, "angle": angle, "face_count": faces.count}
+        return {
+            "feature_name": feat.name,
+            "angle": angle,
+            "face_count": faces.count,
+            "component": comp.name,
+        }
 
     def split_body(
         self,
@@ -1437,19 +1507,22 @@ class CommandHandler:
         splitting_body: str = None,
         extend_tool: bool = True,
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
-        splits = root.features.splitBodyFeatures
+        splits = comp.features.splitBodyFeatures
         if splitting_body:
-            tool = self._body_by_name(splitting_body)
+            tool, _ = self._native(self._body_by_name(splitting_body))
             inp = splits.createInput(body, tool, extend_tool)
         else:
             inp = splits.createInput(
-                body, self._construction_plane(splitting_plane), extend_tool
+                body, self._construction_plane(splitting_plane, comp), extend_tool
             )
         feat = splits.add(inp)
-        return {"feature_name": feat.name, "splitting_plane": splitting_plane}
+        return {
+            "feature_name": feat.name,
+            "splitting_plane": splitting_plane,
+            "component": comp.name,
+        }
 
     def split_face(
         self,
@@ -1458,8 +1531,7 @@ class CommandHandler:
         splitting_plane: str = "xy",
         extend_tool: bool = True,
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
         faces = adsk.core.ObjectCollection.create()
         if face_indices:
@@ -1469,12 +1541,12 @@ class CommandHandler:
             for face in body.faces:
                 faces.add(face)
 
-        splits = root.features.splitFaceFeatures
+        splits = comp.features.splitFaceFeatures
         inp = splits.createInput(
-            faces, self._construction_plane(splitting_plane), extend_tool
+            faces, self._construction_plane(splitting_plane, comp), extend_tool
         )
         feat = splits.add(inp)
-        return {"feature_name": feat.name}
+        return {"feature_name": feat.name, "component": comp.name}
 
     def offset_faces(
         self,
@@ -1483,8 +1555,7 @@ class CommandHandler:
         face_selection: str = "top",
         face_indices: list = None,
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
         if face_indices:
             faces = adsk.core.ObjectCollection.create()
@@ -1493,14 +1564,14 @@ class CommandHandler:
         else:
             faces = self._select_faces(body, face_selection)
 
-        offsets = root.features.offsetFeatures
+        offsets = comp.features.offsetFeatures
         inp = offsets.createInput(
             faces,
             adsk.core.ValueInput.createByReal(distance),
             adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
         )
         feat = offsets.add(inp)
-        return {"feature_name": feat.name, "distance": distance}
+        return {"feature_name": feat.name, "distance": distance, "component": comp.name}
 
     def scale_body(
         self,
@@ -1513,15 +1584,14 @@ class CommandHandler:
         anchor_y: float = 0,
         anchor_z: float = 0,
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
         bodies = adsk.core.ObjectCollection.create()
         bodies.add(body)
 
         anchor = adsk.core.Point3D.create(anchor_x, anchor_y, anchor_z)
 
-        scales = root.features.scaleFeatures
+        scales = comp.features.scaleFeatures
         if scale_x is not None and scale_y is not None and scale_z is not None:
             inp = scales.createInput(
                 bodies,
@@ -1535,7 +1605,7 @@ class CommandHandler:
                 bodies, anchor, adsk.core.ValueInput.createByReal(scale)
             )
         feat = scales.add(inp)
-        return {"feature_name": feat.name, "scale": scale}
+        return {"feature_name": feat.name, "scale": scale, "component": comp.name}
 
     def suppress_feature(self, feature_name: str):
         design = self._design()
@@ -1568,10 +1638,9 @@ class CommandHandler:
         return {"renamed": True, "old_name": old_name, "new_name": new_name}
 
     def move_body(self, body_name: str, x: float = 0, y: float = 0, z: float = 0):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
-        move_feats = root.features.moveFeatures
+        move_feats = comp.features.moveFeatures
         bodies = adsk.core.ObjectCollection.create()
         bodies.add(body)
 
@@ -1580,7 +1649,12 @@ class CommandHandler:
 
         inp = move_feats.createInput(bodies, transform)
         feat = move_feats.add(inp)
-        return {"feature_name": feat.name, "body": body_name, "translation": [x, y, z]}
+        return {
+            "feature_name": feat.name,
+            "body": body_name,
+            "translation": [x, y, z],
+            "component": comp.name,
+        }
 
     def export_stl(self, body_name: str, file_path: str = None):
         body = self._body_by_name(body_name)
@@ -1973,11 +2047,18 @@ class CommandHandler:
     def boolean_operation(
         self, target_body: str, tool_body: str, operation: str = "join"
     ):
-        root = self._root()
         target = self._body_by_name(target_body)
         tool = self._body_by_name(tool_body)
+        native_target, comp = self._native(target)
+        native_tool, tool_comp = self._native(tool)
+        if tool_comp == comp:
+            target, tool = native_target, native_tool
+        else:
+            # Across components: proxies in root (Fusion files the feature
+            # under the target's component).
+            comp = self._root()
 
-        combine_feats = root.features.combineFeatures
+        combine_feats = comp.features.combineFeatures
         tool_coll = adsk.core.ObjectCollection.create()
         tool_coll.add(tool)
 
@@ -2000,6 +2081,7 @@ class CommandHandler:
             "operation": operation,
             "target": target_body,
             "tool": tool_body,
+            "component": feat.parentComponent.name,
         }
 
     def delete_all(self):
@@ -2188,8 +2270,9 @@ class CommandHandler:
         center_x: float = 0,
         center_y: float = 0,
         center_z: float = 0,
+        component: str = None,
     ):
-        root = self._root()
+        comp = self._target_component(component)
         temp_brep = adsk.fusion.TemporaryBRepManager.get()
 
         # Box orientation matrix
@@ -2203,12 +2286,18 @@ class CommandHandler:
         )
 
         box_body = temp_brep.createBox(orient)
-        base_feat = root.features.baseFeatures.add()
+        base_feat = comp.features.baseFeatures.add()
         base_feat.startEdit()
-        root.bRepBodies.add(box_body, base_feat)
+        comp.bRepBodies.add(box_body, base_feat)
         base_feat.finishEdit()
 
-        return {"created": True, "length": length, "width": width, "height": height}
+        return {
+            "created": True,
+            "length": length,
+            "width": width,
+            "height": height,
+            "component": comp.name,
+        }
 
     def create_box_parametric(
         self,
@@ -2232,7 +2321,7 @@ class CommandHandler:
             self._component_by_name(component_name) if component_name else self._root()
         )
 
-        base_plane = self._construction_plane(plane)
+        base_plane = self._construction_plane(plane, comp)
         if origin_z != 0:
             plane_input = comp.constructionPlanes.createInput()
             offset_val = adsk.core.ValueInput.createByReal(origin_z)
@@ -2318,8 +2407,9 @@ class CommandHandler:
         base_y: float = 0,
         base_z: float = 0,
         axis: str = "z",
+        component: str = None,
     ):
-        root = self._root()
+        comp = self._target_component(component)
         temp_brep = adsk.fusion.TemporaryBRepManager.get()
 
         base_pt = adsk.core.Point3D.create(base_x, base_y, base_z)
@@ -2332,12 +2422,17 @@ class CommandHandler:
 
         cyl_body = temp_brep.createCylinderOrCone(base_pt, radius, top_pt, radius)
 
-        base_feat = root.features.baseFeatures.add()
+        base_feat = comp.features.baseFeatures.add()
         base_feat.startEdit()
-        root.bRepBodies.add(cyl_body, base_feat)
+        comp.bRepBodies.add(cyl_body, base_feat)
         base_feat.finishEdit()
 
-        return {"created": True, "radius": radius, "height": height}
+        return {
+            "created": True,
+            "radius": radius,
+            "height": height,
+            "component": comp.name,
+        }
 
     def create_sphere(
         self,
@@ -2345,19 +2440,20 @@ class CommandHandler:
         center_x: float = 0,
         center_y: float = 0,
         center_z: float = 0,
+        component: str = None,
     ):
-        root = self._root()
+        comp = self._target_component(component)
         temp_brep = adsk.fusion.TemporaryBRepManager.get()
 
         center = adsk.core.Point3D.create(center_x, center_y, center_z)
         sphere_body = temp_brep.createSphere(center, radius)
 
-        base_feat = root.features.baseFeatures.add()
+        base_feat = comp.features.baseFeatures.add()
         base_feat.startEdit()
-        root.bRepBodies.add(sphere_body, base_feat)
+        comp.bRepBodies.add(sphere_body, base_feat)
         base_feat.finishEdit()
 
-        return {"created": True, "radius": radius}
+        return {"created": True, "radius": radius, "component": comp.name}
 
     def create_torus(
         self,
@@ -2367,8 +2463,9 @@ class CommandHandler:
         center_y: float = 0,
         center_z: float = 0,
         axis: str = "z",
+        component: str = None,
     ):
-        root = self._root()
+        comp = self._target_component(component)
         temp_brep = adsk.fusion.TemporaryBRepManager.get()
 
         center = adsk.core.Point3D.create(center_x, center_y, center_z)
@@ -2379,15 +2476,16 @@ class CommandHandler:
             center, axis_vector, major_radius, minor_radius
         )
 
-        base_feat = root.features.baseFeatures.add()
+        base_feat = comp.features.baseFeatures.add()
         base_feat.startEdit()
-        root.bRepBodies.add(torus_body, base_feat)
+        comp.bRepBodies.add(torus_body, base_feat)
         base_feat.finishEdit()
 
         return {
             "created": True,
             "major_radius": major_radius,
             "minor_radius": minor_radius,
+            "component": comp.name,
         }
 
     # ------------------------------------------------------------------
@@ -3445,14 +3543,14 @@ class CommandHandler:
     def patch_surface(
         self, sketch_name: str, profile_index: int = 0, continuity: str = "connected"
     ):
-        root = self._root()
         sketch = self._sketch_by_name(sketch_name)
+        comp = sketch.parentComponent
 
         if sketch.profiles.count == 0:
             raise RuntimeError("No profiles in sketch")
         profile = sketch.profiles.item(profile_index)
 
-        patches = root.features.patchFeatures
+        patches = comp.features.patchFeatures
         inp = patches.createInput(
             profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation
         )
@@ -3466,34 +3564,42 @@ class CommandHandler:
         inp.boundaryContinuity = cont_map.get(continuity, cont_map["connected"])
 
         feat = patches.add(inp)
-        return {"feature_name": feat.name, "continuity": continuity}
+        return {
+            "feature_name": feat.name,
+            "continuity": continuity,
+            "component": comp.name,
+        }
 
     def stitch_surfaces(self, body_names: list, tolerance: float = 0.01):
-        root = self._root()
+        comp = self._root()
         bodies = adsk.core.ObjectCollection.create()
         for name in body_names:
-            bodies.add(self._body_by_name(name))
+            body, comp = self._native(self._body_by_name(name))
+            bodies.add(body)
 
-        stitches = root.features.stitchFeatures
+        stitches = comp.features.stitchFeatures
         inp = stitches.createInput(
             bodies,
             adsk.core.ValueInput.createByReal(tolerance),
             adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
         )
         feat = stitches.add(inp)
-        return {"feature_name": feat.name, "body_count": len(body_names)}
+        return {
+            "feature_name": feat.name,
+            "body_count": len(body_names),
+            "component": comp.name,
+        }
 
     def thicken_surface(
         self, body_name: str, thickness: float, direction: str = "symmetric"
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
         faces = adsk.core.ObjectCollection.create()
         for face in body.faces:
             faces.add(face)
 
-        thickens = root.features.thickenFeatures
+        thickens = comp.features.thickenFeatures
         inp = thickens.createInput(
             faces,
             adsk.core.ValueInput.createByReal(thickness),
@@ -3502,7 +3608,11 @@ class CommandHandler:
             direction == "symmetric",
         )
         feat = thickens.add(inp)
-        return {"feature_name": feat.name, "thickness": thickness}
+        return {
+            "feature_name": feat.name,
+            "thickness": thickness,
+            "component": comp.name,
+        }
 
     def ruled_surface(
         self,
@@ -3511,24 +3621,22 @@ class CommandHandler:
         distance: float = 1.0,
         rule_type: str = "normal",
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
         edge = body.edges.item(edge_index)
 
-        ruled = root.features.ruledSurfaceFeatures
+        ruled = comp.features.ruledSurfaceFeatures
         inp = ruled.createInput(edge, adsk.core.ValueInput.createByReal(distance))
         feat = ruled.add(inp)
-        return {"feature_name": feat.name, "distance": distance}
+        return {"feature_name": feat.name, "distance": distance, "component": comp.name}
 
     def trim_surface(self, body_name: str, tool_name: str):
-        root = self._root()
-        body = self._body_by_name(body_name)
-        tool = self._body_by_name(tool_name)
+        body, comp = self._native(self._body_by_name(body_name))
+        tool, _ = self._native(self._body_by_name(tool_name))
 
-        trims = root.features.trimFeatures
+        trims = comp.features.trimFeatures
         inp = trims.createInput(body, tool)
         feat = trims.add(inp)
-        return {"feature_name": feat.name}
+        return {"feature_name": feat.name, "component": comp.name}
 
     # ------------------------------------------------------------------
     # Sheet Metal
@@ -3542,11 +3650,10 @@ class CommandHandler:
         angle: float = 90,
         bend_radius: float = None,
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
         edge = body.edges.item(edge_index)
 
-        flanges = root.features.flangeFeatures
+        flanges = comp.features.flangeFeatures
         inp = flanges.createInput(edge, True)
         inp.angle = adsk.core.ValueInput.createByString(f"{angle} deg")
         inp.height = adsk.core.ValueInput.createByReal(height)
@@ -3554,7 +3661,12 @@ class CommandHandler:
             inp.bendRadius = adsk.core.ValueInput.createByReal(bend_radius)
 
         feat = flanges.add(inp)
-        return {"feature_name": feat.name, "height": height, "angle": angle}
+        return {
+            "feature_name": feat.name,
+            "height": height,
+            "angle": angle,
+            "component": comp.name,
+        }
 
     def create_bend(
         self,
@@ -3563,38 +3675,35 @@ class CommandHandler:
         angle: float = 90,
         bend_radius: float = None,
     ):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
         if bend_line_sketch:
             sketch = self._sketch_by_name(bend_line_sketch)
             bend_line = sketch.sketchCurves.sketchLines.item(0)
 
-            bends = root.features.bendFeatures
+            bends = comp.features.bendFeatures
             inp = bends.createInput(body, bend_line, True)
             inp.bendAngle = adsk.core.ValueInput.createByString(f"{angle} deg")
             if bend_radius:
                 inp.bendRadius = adsk.core.ValueInput.createByReal(bend_radius)
 
             feat = bends.add(inp)
-            return {"feature_name": feat.name, "angle": angle}
+            return {"feature_name": feat.name, "angle": angle, "component": comp.name}
         else:
             raise RuntimeError("bend_line_sketch is required")
 
     def flat_pattern(self, body_name: str):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
-        flat_patterns = root.features.flatPatternFeatures
+        flat_patterns = comp.features.flatPatternFeatures
         inp = flat_patterns.createInput(body)
         feat = flat_patterns.add(inp)
-        return {"feature_name": feat.name}
+        return {"feature_name": feat.name, "component": comp.name}
 
     def unfold(self, body_name: str, bend_indices: list = None):
-        root = self._root()
-        body = self._body_by_name(body_name)
+        body, comp = self._native(self._body_by_name(body_name))
 
-        unfolds = root.features.unfoldFeatures
+        unfolds = comp.features.unfoldFeatures
 
         bends = adsk.core.ObjectCollection.create()
         if bend_indices:
@@ -3618,7 +3727,7 @@ class CommandHandler:
 
         inp = unfolds.createInput(bends, stationary)
         feat = unfolds.add(inp)
-        return {"feature_name": feat.name}
+        return {"feature_name": feat.name, "component": comp.name}
 
     # ------------------------------------------------------------------
     # CAM
