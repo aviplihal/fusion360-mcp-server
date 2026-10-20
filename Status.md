@@ -31,7 +31,7 @@ Done (2026-10-19), live-tested in parametric and direct designs, including a rea
 - `move_occurrence(occurrence, translation?, axis?, angle?, relative?)`: direct designs set transform2. Parametric designs re-insert and delete (transform2 doesn't last there), which renumbers the occurrence, so the tool returns `occurrence` + `previous_occurrence`. It refuses when joints, as-built joints or rigid groups reference the occurrence. Keeps grounded state (top level only).
 - Both are in the mutation sets (deltas). 399 tests pass.
 
-Commit status: committed on `feat/assembly-tools`; the add-in needs a restart to run it.
+Commit status: committed and pushed on `feat/assembly-tools` (PR #1, now covering PR 1 + PR 2). The add-in needs a restart to run it.
 
 ### Next: PR 3, find_holes + list_faces + real joint geometry + create_as_built_joint fix
 
