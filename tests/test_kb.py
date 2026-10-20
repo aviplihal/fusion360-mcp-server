@@ -208,12 +208,13 @@ def test_missing_folder_explains_the_env_var(tmp_path):
 
 def test_kb_tools_are_separate_from_fusion_tools():
     names = {t["name"] for t in KB_TOOLS}
-    assert names == {"kb_search", "kb_get", "kb_feedback"}
+    assert names == {"kb_search", "kb_get", "kb_feedback", "kb_find_part"}
     assert not names & {t["name"] for t in TOOLS}
     assert all(is_kb_tool(n) for n in names)
     assert not is_kb_tool("extrude")
     for tool in get_kb_tool_list():
-        assert tool.annotations.readOnlyHint is (tool.name != "kb_feedback")
+        writes = tool.name in ("kb_feedback", "kb_find_part")
+        assert tool.annotations.readOnlyHint is not writes
 
 
 def test_kb_search_tool_returns_one_line_per_hit(kb):

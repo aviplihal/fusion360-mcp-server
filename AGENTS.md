@@ -163,7 +163,7 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 |------|-------------|
 | `render_view` | Capture the active viewport as a PNG. Pass `view=iso\|front\|top\|...` to reposition the camera first. Returns an image content block you can visually inspect to validate geometry before committing to more operations. |
 
-## Knowledge base tools (3)
+## Knowledge base tools (4)
 
 These run inside the MCP server and work without Fusion. They search the `kb/` folder (set `FUSION_MCP_KB_DIR` if the server isn't run from the repo): past FTC robots and their mechanisms, reusable design ideas, the current game manual's rules, and reference books. The SQLite index (`kb/.index.sqlite`) rebuilds itself whenever a file in `kb/` changes.
 
@@ -172,8 +172,9 @@ These run inside the MCP server and work without Fusion. They search the `kb/` f
 | `kb_search` | One line per hit, best first. Filters: `kind` (robot, mechanism, idea, rule, book), `type` (mechanism type), `season`, exact `facets`. Robots from stronger teams (FTC Scout rating) rank higher |
 | `kb_get` | Open one entry by id: a robot with its mechanisms, a mechanism card, an idea, a rule (`R105`) or a book section |
 | `kb_feedback` | Record the user's verdict (`liked`/`disliked`) on a design built from KB entries, with the reason. Writes `kb/feedback.csv`; each like is +0.1, each dislike −0.1 on that entry's rank (0.7–1.3×) |
+| `kb_find_part` | Find goBILDA parts in `kb/parts/parts.csv`. Exact filters: `sku`, `type`, `series`, `counts_as` (motor/servo/none, for the 8+8 rule), `length_mm` (+ optional `length_tol_mm`). `name` takes free text or a part name from another team's CAD (`Sonic Hub - 8mm REX (GB)`, `… 5203-2402-0019`): a SKU in the name wins, otherwise every number in it must match exactly. `download: true` fetches the single match's STEP file into `~/.fusion-mcp/step-cache/<sku>.step` (once) and returns the path for `insert_part` |
 
-Search before designing a mechanism, and use `kind: "rule"` to check a rule. When the user accepts or rejects a part you based on KB entries, call `kb_feedback` with only the entries that caused the verdict.
+Search before designing a mechanism, and use `kind: "rule"` to check a rule. When the user accepts or rejects a part you based on KB entries, call `kb_feedback` with only the entries that caused the verdict. Before modeling a COTS part, find it with `kb_find_part` and insert its STEP file instead.
 
 ## Response shape
 

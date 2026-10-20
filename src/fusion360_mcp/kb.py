@@ -10,6 +10,7 @@ Indexed:
   books/<book>/rules/<ID>.md        kind=rule       id = frontmatter id (R105)
   books/<book>/**/<name>.md         kind=book       id = <book>/<frontmatter id or name>
   ideas.csv                         kind=idea       id = csv id
+  parts/parts.csv                   own ``parts`` table (see kb_parts.py)
 """
 
 from __future__ import annotations
@@ -23,9 +24,11 @@ import re
 import sqlite3
 from pathlib import Path
 
+from . import kb_parts
+
 KINDS = ("robot", "mechanism", "idea", "rule", "book")
 # Bump when parsing or the schema changes, so existing indexes rebuild.
-INDEX_VERSION = "5"
+INDEX_VERSION = "6"
 
 # Feedback from the user's verdicts on designs built from an entry
 # (kb/feedback.csv): each like +FEEDBACK_STEP, each dislike -FEEDBACK_STEP,
@@ -253,7 +256,7 @@ def _indexed_files(kb_dir: Path) -> list[Path]:
     books = kb_dir / "books"
     if books.is_dir():
         files.extend(sorted(books.glob("*/ideas.csv")))
-    for name in ("ideas.csv", "feedback.csv"):
+    for name in ("ideas.csv", "feedback.csv", "parts/parts.csv"):
         if (kb_dir / name).is_file():
             files.append(kb_dir / name)
     return files
@@ -324,8 +327,8 @@ class KnowledgeBase:
             rel = f.relative_to(self.kb_dir)
             if f.name == "ideas.csv":
                 docs.extend(_docs_from_ideas(f, rel))
-            elif f.name == "feedback.csv":
-                continue  # applied after the docs exist (_apply_feedback)
+            elif f.name in ("feedback.csv", "parts.csv"):
+                continue  # feedback: _apply_feedback; parts: own table below
             else:
                 doc = _doc_from_markdown(f, rel)
                 if doc:
@@ -360,6 +363,7 @@ class KnowledgeBase:
                 (d["id"], d["title"], d["body"], d["tags"]),
             )
         self._apply_feedback(conn)
+        kb_parts.load_parts(conn, self.kb_dir / "parts" / "parts.csv")
         conn.execute("INSERT INTO info VALUES ('signature', ?)", (sig,))
         conn.commit()
 
@@ -494,6 +498,10 @@ class KnowledgeBase:
                     }
                 )
         return ids
+
+    def find_parts(self, **filters) -> list[dict]:
+        """goBILDA parts by exact filters and/or name (kb_parts.find_parts)."""
+        return kb_parts.find_parts(self._connect(), **filters)
 
     def similar_ids(self, doc_id: str, limit: int = 5) -> list[str]:
         conn = self._connect()
