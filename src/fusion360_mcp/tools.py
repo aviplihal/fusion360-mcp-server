@@ -631,13 +631,24 @@ TOOLS: list[dict] = [
         "name": "list_components",
         "title": "List Components",
         "description": (
-            "List all components in the design with their occurrence names "
-            "(e.g. 'Channel:2') and grounded state. Use occurrence names to "
-            "tell copies of the same part apart."
+            "Assembly tree of occurrences: occurrence name (e.g. 'Channel:2', "
+            "use it to tell copies apart), component, translation (cm, "
+            "assembly coordinates), axis/angle only when rotated, "
+            "grounded only when true, visible only when false, children. "
+            "'parts' gives each component's part_number and source file once."
         ),
         "inputSchema": {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "depth": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": (
+                        "Levels to expand (1 = top level only; deeper "
+                        "levels show child_count). Omit for all."
+                    ),
+                },
+            },
         },
     },
     # ── export ─────────────────────────────────────────────────────────
@@ -1829,6 +1840,82 @@ TOOLS: list[dict] = [
         },
     },
     {
+        "name": "join_on_holes",
+        "title": "Join On Holes",
+        "description": (
+            "Bolt occ_a (moves) to occ_b (stays) hole-to-hole, with the mover "
+            "placed outside occ_b: the side is picked from the fixed part's "
+            "shape (a channel's outer face) or, for a flat plate, the side the "
+            "mover is on now. Re-joins flipped automatically if the result "
+            "interferes. Holes are refs from find_holes. rotation turns the "
+            "mover about the bolt axis (0/90/180 on hole grids). Returns "
+            "joint, health, moved_bbox and interference_volume (cm³, between "
+            "just these two parts; 0 = clean)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["occ_a", "hole_a", "occ_b", "hole_b"],
+            "properties": {
+                "occ_a": {
+                    "type": "string",
+                    "description": "Moving occurrence. " + _OCC_NAME,
+                },
+                "hole_a": {
+                    "type": "string",
+                    "description": "Hole ref on occ_a, e.g. 'Bracket:2/b0/f3'",
+                },
+                "occ_b": {
+                    "type": "string",
+                    "description": "Fixed occurrence. " + _OCC_NAME,
+                },
+                "hole_b": {"type": "string", "description": "Hole ref on occ_b"},
+                "rotation": {
+                    "type": "number",
+                    "default": 0,
+                    "description": "Degrees about the bolt axis",
+                },
+                "joint_type": {
+                    "type": "string",
+                    "enum": _JOINT_TYPES,
+                    "default": "rigid",
+                    "description": "revolute = pivot on the bolt",
+                },
+                "flip": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Put the mover on the other side",
+                },
+                "offset": {
+                    "type": "number",
+                    "default": 0,
+                    "description": "Gap along the bolt axis (spacer), cm",
+                },
+            },
+        },
+    },
+    {
+        "name": "list_joints",
+        "title": "List Joints",
+        "description": (
+            "List joints and as-built joints: name, type, occurrences one "
+            "(moves) and two, value (revolute deg, slider cm, cylindrical/"
+            "pin_slot [deg, cm]), limits if set, suppressed, health."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_bom",
+        "title": "Get BOM",
+        "description": (
+            "Bill of materials: occurrences grouped by component with count, "
+            "part_number, mass_g per unit, class (motor/servo by part-number "
+            "prefix) and occurrence names when count ≤ 5. Totals: "
+            "total_count, total_mass_g, motor_count, servo_count. Components "
+            "without bodies (pure groupings) are skipped."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "move_occurrence",
         "title": "Move Occurrence",
         "description": (
@@ -2648,6 +2735,8 @@ TOOLS: list[dict] = [
 _READ_ONLY = {
     "find_holes",
     "list_faces",
+    "list_joints",
+    "get_bom",
     "get_scene_info",
     "get_object_info",
     "get_bounding_box",
@@ -2669,6 +2758,8 @@ _DESTRUCTIVE = {"delete_all", "delete_parameter"}
 _IDEMPOTENT = {
     "find_holes",
     "list_faces",
+    "list_joints",
+    "get_bom",
     "ping",
     "get_scene_info",
     "get_object_info",

@@ -24,7 +24,7 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 | `ping` | Health check (no Fusion API, instant) |
 | `get_scene_info` | Design name, bodies, sketches, features, camera |
 | `get_object_info` | Detailed info about a named body or sketch |
-| `list_components` | List all components in the design |
+| `list_components` | Assembly tree: occurrences, translation, rotation if any, grounded; `depth` limits levels |
 
 ### Sketching
 | Tool | Description |
@@ -119,6 +119,9 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 | `move_occurrence` | Place an occurrence (absolute or relative); may renumber it in parametric designs |
 | `find_holes` | Holes of an occurrence with refs, diameter, start/end points (for add_joint) |
 | `list_faces` | Planar/cylindrical faces of an occurrence with refs, normals, centers |
+| `join_on_holes` | Bolt one occurrence to another hole-to-hole, mover placed outside the fixed part; rigid/revolute, rotation; returns interference_volume |
+| `list_joints` | Joints and as-built joints: type, occurrences, value, limits, health |
+| `get_bom` | Parts grouped by component: count, mass, motor/servo counts, total mass |
 
 ### Inspection & Analysis
 | Tool | Description |
@@ -223,7 +226,7 @@ Known `error_kind` values: `PROFILE_NOT_CLOSED`, `SKETCH_NOT_FOUND`, `BODY_NOT_F
 - **No loops inside execute_code.** If you need to create 3 similar features, make 3 separate tool calls.
 - **Keep execute_code under ~15 lines.** Prefer the dedicated tools over execute_code whenever possible.
 - **Name parts by occurrence.** Copies of one part share a component name (`Channel`) but have unique occurrence names (`Channel:1`, `Channel:2`); `list_components` shows them. Assembly tools accept either, and error with the candidates when a component name is ambiguous.
-- **Bolting parts:** `find_holes` on both parts, then `add_joint` with `geometry_one` = moving part's hole, `geometry_two` = fixed part's hole. Moving `end` → fixed `start` lands the mover on the fixed hole's start side; `start` → `end` on its end side. The first occurrence moves, so ground the base part first. Check `health` and `check_interference` afterwards.
+- **Bolting parts:** `find_holes` on both parts, then `join_on_holes(occ_a=mover, hole_a, occ_b=fixed, hole_b)`; it picks the side and checks interference. For full control use `add_joint` with `geometry_one` = moving part's hole, `geometry_two` = fixed part's hole. Moving `end` → fixed `start` lands the mover on the fixed hole's start side; `start` → `end` on its end side. The first occurrence moves, so ground the base part first. Check `health` and `check_interference` afterwards.
 - **Units are centimeters.** Fusion's internal API uses cm, not mm.
 - **30-second timeout.** Commands that take longer than 30s will return a timeout error.
 - **body_name preferred over body_index.** Use named lookups when possible.

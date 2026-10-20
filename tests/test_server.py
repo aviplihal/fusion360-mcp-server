@@ -94,6 +94,8 @@ class TestToolAnnotations:
         read_only_names = {
             "find_holes",
             "list_faces",
+            "list_joints",
+            "get_bom",
             "get_scene_info",
             "get_object_info",
             "get_bounding_box",

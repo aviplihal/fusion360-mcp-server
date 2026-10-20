@@ -432,26 +432,112 @@ def _list_faces(p: dict) -> dict:
     return {"occurrence": occ, "count": len(faces), "faces": faces, "truncated": False}
 
 
-def _list_components(_p: dict) -> dict:
-    return {
-        "components": [
-            {"name": "RootComponent", "is_root": True},
+def _list_components(p: dict) -> dict:
+    drive = {
+        "occurrence": "Drive:1",
+        "component": "Drive",
+        "translation": [0.0, 0.0, 0.0],
+        "children": [
             {
-                "name": "Channel",
-                "occurrence": "Channel:1",
-                "is_root": False,
-                "is_visible": True,
-                "is_grounded": True,
+                "occurrence": "Drive:1+Channel:1",
+                "component": "Channel",
+                "grounded": True,
+                "translation": [0.0, 0.0, 0.0],
             },
             {
-                "name": "Channel",
-                "occurrence": "Channel:2",
-                "is_root": False,
-                "is_visible": True,
-                "is_grounded": False,
+                "occurrence": "Drive:1+Channel:2",
+                "component": "Channel",
+                "translation": [0.0, 20.0, 0.0],
+                "axis": [0.0, 0.0, 1.0],
+                "angle": 90.0,
             },
         ],
+    }
+    depth = p.get("depth")
+    if depth is not None and depth < 2:
+        drive = {k: v for k, v in drive.items() if k != "children"}
+        drive["child_count"] = 2
+    return {
+        "root": "RootComponent",
+        "root_bodies": 0,
         "count": 3,
+        "components": [drive],
+        "parts": {
+            "Channel": {
+                "part_number": "1120-0001-0336",
+                "source": "/parts/1120-0001-0336.step",
+            }
+        },
+    }
+
+
+def _join_on_holes(p: dict) -> dict:
+    moved = _occ_name(p.get("occ_a", "Comp1"))
+    return {
+        "joint": "Rigid 1",
+        "joint_type": p.get("joint_type", "rigid"),
+        "moved": moved,
+        "fixed": _occ_name(p.get("occ_b", "Comp2")),
+        "keypoints": {"moved": "end", "fixed": "start"},
+        "side_from": "mover position",
+        "flipped": bool(p.get("flip", False)),
+        "auto_flipped": False,
+        "health": "ok",
+        "moved_bbox": {"min": [0.0, 0.0, 0.5], "max": [6.0, 1.6, 0.8]},
+        "interference_volume": 0.0,
+    }
+
+
+def _list_joints(_p: dict) -> dict:
+    return {
+        "count": 2,
+        "joints": [
+            {
+                "name": "Rigid 1",
+                "type": "rigid",
+                "one": "Bracket:1",
+                "two": "Plate:1",
+                "suppressed": False,
+                "health": "ok",
+            },
+            {
+                "name": "Revolute 2",
+                "type": "revolute",
+                "one": "Arm:1",
+                "two": "Bracket:1",
+                "value": 30.0,
+                "limits": {"rotation": {"min": -90.0, "max": 90.0}},
+                "suppressed": False,
+                "health": "ok",
+            },
+        ],
+    }
+
+
+def _get_bom(_p: dict) -> dict:
+    return {
+        "parts": [
+            {
+                "component": "Channel",
+                "part_number": "1120-0001-0336",
+                "count": 4,
+                "mass_g": 62.5,
+                "occurrences": ["Channel:1", "Channel:2", "Channel:3", "Channel:4"],
+            },
+            {
+                "component": "Motor",
+                "part_number": "5203-2402-0019",
+                "count": 2,
+                "mass_g": 425.0,
+                "class": "motor",
+                "occurrences": ["Motor:1", "Motor:2"],
+            },
+        ],
+        "unique": 2,
+        "total_count": 6,
+        "total_mass_g": 1100.0,
+        "motor_count": 2,
+        "servo_count": 0,
     }
 
 
@@ -1204,6 +1290,9 @@ _DISPATCH: dict[str, Any] = {
     "list_faces": _list_faces,
     "insert_part": _insert_part,
     "move_occurrence": _move_occurrence,
+    "join_on_holes": _join_on_holes,
+    "list_joints": _list_joints,
+    "get_bom": _get_bom,
     # inspection / analysis
     "measure_distance": _measure_distance,
     "measure_angle": _measure_angle,

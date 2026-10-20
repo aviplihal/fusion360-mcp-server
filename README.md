@@ -134,7 +134,7 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 | `get_scene_info` | Design name, bodies, sketches, features, camera |
 | `get_object_info` | Detailed info about a named body or sketch |
 | `get_bounding_box` | Axis-aligned bbox (min/max/size/center) for body or component; unions all bodies when called on a component |
-| `list_components` | List all components in the design |
+| `list_components` | Assembly tree of occurrences with placement |
 
 ### Design Type Safety
 | Tool | Description |
@@ -237,6 +237,9 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 | `move_occurrence` | Place an occurrence (absolute or relative) |
 | `find_holes` | Holes of an occurrence with refs and start/end points |
 | `list_faces` | Planar/cylindrical faces of an occurrence with refs |
+| `join_on_holes` | Bolt two parts hole-to-hole on the correct side, checked for interference |
+| `list_joints` | List joints with type, value, limits and health |
+| `get_bom` | Bill of materials with mass and motor/servo counts |
 
 ### Inspection & Analysis
 | Tool | Description |

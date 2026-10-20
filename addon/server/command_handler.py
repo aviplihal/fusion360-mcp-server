@@ -20,6 +20,7 @@ import adsk.cam
 import adsk.core
 import adsk.fusion
 
+from . import assembly_math as _asm
 from . import get_logger
 from . import hints as _hints
 from . import hole_geometry as _hole_geom
@@ -192,6 +193,9 @@ class CommandHandler:
                 "list_faces": self.list_faces,
                 "move_occurrence": self.move_occurrence,
                 "insert_part": self.insert_part,
+                "join_on_holes": self.join_on_holes,
+                "list_joints": self.list_joints,
+                "get_bom": self.get_bom,
                 # inspection / analysis
                 "measure_distance": self.measure_distance,
                 "measure_angle": self.measure_angle,
@@ -606,20 +610,58 @@ class CommandHandler:
 
         return {"found": False, "name": name}
 
-    def list_components(self):
+    def list_components(self, depth: int = None):
+        """Occurrence tree. To save tokens, grounded appears only when true,
+        visible only when false, axis/angle only when rotated, and each
+        component's part_number/source once under "parts"."""
         root = self._root()
-        components = [{"name": root.name, "is_root": True}]
-        for occ in root.allOccurrences:
-            components.append(
-                {
-                    "name": occ.component.name,
-                    "occurrence": occ.fullPathName,
-                    "is_root": False,
-                    "is_visible": occ.isVisible,
-                    "is_grounded": occ.isGrounded,
-                }
-            )
-        return {"components": components, "count": len(components)}
+        group, attr_name = self._IMPORT_SOURCE_ATTR
+        per_comp = {}  # component name -> {part_number?, source?}
+
+        def _comp_fields(comp):
+            fields = per_comp.get(comp.name)
+            if fields is None:
+                fields = {}
+                if comp.partNumber and comp.partNumber != comp.name:
+                    fields["part_number"] = comp.partNumber
+                attr = comp.attributes.itemByName(group, attr_name)
+                if attr is not None:
+                    fields["source"] = attr.value
+                per_comp[comp.name] = fields
+            return fields
+
+        def _node(occ, level):
+            comp = occ.component
+            _comp_fields(comp)
+            n = {"occurrence": occ.fullPathName, "component": comp.name}
+            # isGrounded raises on sub-component occurrences.
+            if occ.assemblyContext is None and occ.isGrounded:
+                n["grounded"] = True
+            if not occ.isVisible:
+                n["visible"] = False
+            m = occ.transform2
+            t = m.translation
+            n["translation"] = self._r((t.x, t.y, t.z))
+            rot = _asm.axis_angle(_asm.matrix_rows(m.asArray()))
+            if rot is not None:
+                n["axis"] = self._r(rot[0])
+                n["angle"] = round(rot[1], 3)
+            kids = occ.childOccurrences
+            if kids.count:
+                if depth is None or level < depth:
+                    n["children"] = [_node(k, level + 1) for k in kids]
+                else:
+                    n["child_count"] = kids.count
+            return n
+
+        tree = [_node(o, 1) for o in root.occurrences]
+        return {
+            "root": root.name,
+            "root_bodies": root.bRepBodies.count,
+            "count": root.allOccurrences.count,
+            "components": tree,
+            "parts": {k: v for k, v in per_comp.items() if v},
+        }
 
     def get_bounding_box(self, name: str):
         """Axis-aligned bounding box for a body or component. Values in cm."""
@@ -3082,6 +3124,249 @@ class CommandHandler:
             "bodies": comp.bRepBodies.count,
             "child_occurrences": occ.childOccurrences.count,
             "bbox": {"min": box[0], "max": box[1]} if box else None,
+        }
+
+    # Interference below this (cm³) is meshing noise, not a real overlap.
+    _INTERFERENCE_EPS = 1e-5
+
+    def _hole_face(self, ref: str, occ):
+        """Cylindrical face for *ref*, checked to belong to *occ*."""
+        face = self._resolve_ref(ref)
+        if not isinstance(face, adsk.fusion.BRepFace) or (
+            face.geometry.surfaceType != adsk.core.SurfaceTypes.CylinderSurfaceType
+        ):
+            raise RuntimeError(f"'{ref}' is not a hole — use a ref from find_holes")
+        ctx = face.assemblyContext
+        path = occ.fullPathName
+        if ctx is None or not (
+            ctx.fullPathName == path or ctx.fullPathName.startswith(path + "+")
+        ):
+            raise RuntimeError(f"Hole '{ref}' is not on occurrence '{path}'")
+        return face
+
+    @staticmethod
+    def _hole_ends(face):
+        """(start, end) keypoints of a hole face in assembly coordinates."""
+        jg, kp = adsk.fusion.JointGeometry, adsk.fusion.JointKeyPointTypes
+        s = jg.createByNonPlanarFace(face, kp.StartKeyPoint).origin
+        e = jg.createByNonPlanarFace(face, kp.EndKeyPoint).origin
+        return (s.x, s.y, s.z), (e.x, e.y, e.z)
+
+    def _pair_interference(self, occ_a, occ_b) -> float:
+        """Total overlap volume (cm³) between two occurrences' bodies."""
+        bodies = adsk.core.ObjectCollection.create()
+        paths_a = set()
+        for b in self._all_bodies(occ_a):
+            bodies.add(b)
+            paths_a.add(b.assemblyContext.fullPathName)
+        for b in self._all_bodies(occ_b):
+            bodies.add(b)
+        if bodies.count < 2:
+            return 0.0
+        design = self._design()
+        inp = design.createInterferenceInput(bodies)
+        inp.areCoincidentFacesIncluded = False
+        results = design.analyzeInterference(inp)
+        total = 0.0
+        for i in range(results.count if results is not None else 0):
+            r = results.item(i)
+            # Skip overlaps inside one part (two bodies of a multi-body STEP).
+            sides = {
+                (e.assemblyContext.fullPathName in paths_a)
+                for e in (r.entityOne, r.entityTwo)
+                if e.assemblyContext is not None
+            }
+            if len(sides) == 1:
+                continue
+            total += r.interferenceBody.volume
+        return total
+
+    def join_on_holes(
+        self,
+        occ_a: str,
+        hole_a: str,
+        occ_b: str,
+        hole_b: str,
+        rotation: float = 0,
+        joint_type: str = "rigid",
+        flip: bool = False,
+        offset: float = 0,
+    ):
+        """Bolt occ_a (moves) to occ_b (fixed) hole-to-hole, outside occ_b."""
+        mover = self._occurrence(occ_a)
+        fixed = self._occurrence(occ_b)
+        if mover.fullPathName == fixed.fullPathName:
+            raise RuntimeError("occ_a and occ_b are the same occurrence")
+        face_a = self._hole_face(hole_a, mover)
+        face_b = self._hole_face(hole_b, fixed)
+        mover_box = self._bbox_union(self._all_bodies(mover))
+        fixed_box = self._bbox_union(self._all_bodies(fixed))
+        sides = _asm.pick_join_sides(
+            self._hole_ends(face_b), fixed_box, self._hole_ends(face_a), mover_box
+        )
+
+        kp = adsk.fusion.JointKeyPointTypes
+        keypoints = {"start": kp.StartKeyPoint, "end": kp.EndKeyPoint}
+        jg = adsk.fusion.JointGeometry
+        for occ in (mover, fixed):
+            self._release_from_parent(occ)
+        root = self._root()
+
+        def _add(flipped: bool):
+            inp = root.joints.createInput(
+                jg.createByNonPlanarFace(face_a, keypoints[sides["mover"]]),
+                jg.createByNonPlanarFace(face_b, keypoints[sides["fixed"]]),
+            )
+            self._set_joint_motion(inp, joint_type)
+            if offset:
+                inp.offset = adsk.core.ValueInput.createByReal(offset)
+            if rotation:
+                inp.angle = adsk.core.ValueInput.createByString(f"{rotation} deg")
+            inp.isFlipped = flipped
+            return root.joints.add(inp)
+
+        joint = _add(sides["flip"] != bool(flip))
+        volume = self._pair_interference(mover, fixed)
+        auto_flipped = False
+        if volume > self._INTERFERENCE_EPS:
+            # Joint.isFlipped can't be edited without rolling the timeline
+            # back, so replace the joint with a flipped one.
+            was_flipped = joint.isFlipped
+            joint.deleteMe()
+            joint = _add(not was_flipped)
+            flipped_volume = self._pair_interference(mover, fixed)
+            if flipped_volume < volume:
+                volume, auto_flipped = flipped_volume, True
+            else:
+                joint.deleteMe()
+                joint = _add(was_flipped)
+
+        box = self._bbox_union(self._all_bodies(mover))
+        return {
+            "joint": joint.name,
+            "joint_type": joint_type,
+            "moved": mover.fullPathName,
+            "fixed": fixed.fullPathName,
+            "keypoints": {"moved": sides["mover"], "fixed": sides["fixed"]},
+            "side_from": sides["reason"],
+            "flipped": joint.isFlipped,
+            "auto_flipped": auto_flipped,
+            **self._joint_health(joint),
+            "moved_bbox": {"min": self._r(box[0]), "max": self._r(box[1])}
+            if box
+            else None,
+            "interference_volume": round(volume, 6),
+        }
+
+    # JointTypes enum value -> the joint_type names the tools take.
+    _JOINT_TYPE_NAMES = {
+        0: "rigid",
+        1: "revolute",
+        2: "slider",
+        3: "cylindrical",
+        4: "pin_slot",
+        5: "planar",
+        6: "ball",
+    }
+
+    def _joint_row(self, j, as_built: bool) -> dict:
+        m = j.jointMotion
+        jt = self._JOINT_TYPE_NAMES.get(m.jointType, str(m.jointType))
+        one, two = j.occurrenceOne, j.occurrenceTwo
+        row = {
+            "name": j.name,
+            "type": jt,
+            "one": one.fullPathName if one else None,
+            "two": two.fullPathName if two else None,
+        }
+        if as_built:
+            row["as_built"] = True
+        rot = jt in ("revolute", "cylindrical", "pin_slot")
+        slide = jt in ("slider", "cylindrical", "pin_slot")
+        values = []
+        if rot:
+            values.append(round(math.degrees(m.rotationValue), 3))
+        if slide:
+            values.append(round(m.slideValue, 4))
+        if values:
+            row["value"] = values[0] if len(values) == 1 else values
+        limits = {}
+        for kind, lim in (
+            ("rotation", m.rotationLimits if rot else None),
+            ("slide", m.slideLimits if slide else None),
+        ):
+            if lim is None:
+                continue
+            to_unit = math.degrees if kind == "rotation" else float
+            ends = {}
+            if lim.isMinimumValueEnabled:
+                ends["min"] = round(to_unit(lim.minimumValue), 4)
+            if lim.isMaximumValueEnabled:
+                ends["max"] = round(to_unit(lim.maximumValue), 4)
+            if ends:
+                limits[kind] = ends
+        if limits:
+            row["limits"] = limits
+        row["suppressed"] = bool(j.isSuppressed)
+        row.update(self._joint_health(j))
+        return row
+
+    def list_joints(self):
+        """Joints and as-built joints. Values: revolute deg, slider cm,
+        cylindrical/pin_slot [deg, cm]."""
+        root = self._root()
+        rows = [self._joint_row(j, False) for j in root.allJoints]
+        rows += [self._joint_row(j, True) for j in root.allAsBuiltJoints]
+        return {"count": len(rows), "joints": rows}
+
+    @staticmethod
+    def _own_mass_kg(comp) -> float:
+        """Mass of a component's own bodies (not its sub-occurrences)."""
+        acc = adsk.fusion.CalculationAccuracy.LowCalculationAccuracy
+        if comp.occurrences.count == 0:
+            return comp.getPhysicalProperties(acc).mass
+        return sum(b.getPhysicalProperties(acc).mass for b in comp.bRepBodies)
+
+    def get_bom(self):
+        """Occurrences grouped by component; mass computed once per component."""
+        root = self._root()
+        groups = {}
+        for occ in root.allOccurrences:
+            comp = occ.component
+            groups.setdefault(comp.name, [comp, []])[1].append(occ.fullPathName)
+
+        classes = _asm.part_classes()
+        class_counts = {c: 0 for c in classes}
+        rows, total_g, total_count = [], 0.0, 0
+        if root.bRepBodies.count:
+            g = self._own_mass_kg(root) * 1000
+            total_g += g
+            rows.append({"component": root.name, "count": 1, "mass_g": round(g, 1)})
+        for name, (comp, paths) in groups.items():
+            if comp.bRepBodies.count == 0:
+                continue
+            g = self._own_mass_kg(comp) * 1000
+            row = {"component": name}
+            if comp.partNumber and comp.partNumber != name:
+                row["part_number"] = comp.partNumber
+            row["count"] = len(paths)
+            row["mass_g"] = round(g, 1)
+            cls = _asm.classify_part(comp.partNumber, name, classes)
+            if cls:
+                row["class"] = cls
+                class_counts[cls] += len(paths)
+            if len(paths) <= 5:
+                row["occurrences"] = paths
+            rows.append(row)
+            total_g += g * len(paths)
+            total_count += len(paths)
+        rows.sort(key=lambda r: (-r["count"], r["component"]))
+        return {
+            "parts": rows,
+            "unique": len(rows),
+            "total_count": total_count,
+            "total_mass_g": round(total_g, 1),
+            **{f"{c}_count": n for c, n in class_counts.items()},
         }
 
     # ------------------------------------------------------------------

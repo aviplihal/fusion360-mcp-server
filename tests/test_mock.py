@@ -333,10 +333,49 @@ class TestMockAssembly:
 
     def test_list_components(self):
         result = mock_command("list_components")
-        assert "components" in result
-        occs = [c["occurrence"] for c in result["components"] if not c["is_root"]]
+        kids = result["components"][0]["children"]
         # Two copies of the same component are told apart by occurrence name.
-        assert occs == ["Channel:1", "Channel:2"]
+        assert [c["occurrence"] for c in kids] == [
+            "Drive:1+Channel:1",
+            "Drive:1+Channel:2",
+        ]
+        assert "axis" not in kids[0] and kids[1]["angle"] == 90.0
+        assert result["parts"]["Channel"]["part_number"] == "1120-0001-0336"
+
+    def test_list_components_depth(self):
+        top = mock_command("list_components", {"depth": 1})["components"][0]
+        assert "children" not in top
+        assert top["child_count"] == 2
+
+    def test_join_on_holes(self):
+        result = mock_command(
+            "join_on_holes",
+            {
+                "occ_a": "Bracket:2",
+                "hole_a": "Bracket:2/b0/f0",
+                "occ_b": "Plate:1",
+                "hole_b": "Plate:1/b0/f61",
+                "joint_type": "revolute",
+            },
+        )
+        assert result["moved"] == "Bracket:2"
+        assert result["fixed"] == "Plate:1"
+        assert result["joint_type"] == "revolute"
+        assert result["interference_volume"] == 0.0
+        assert result["health"] == "ok"
+
+    def test_list_joints(self):
+        result = mock_command("list_joints")
+        assert result["count"] == len(result["joints"])
+        rev = result["joints"][1]
+        assert rev["type"] == "revolute"
+        assert set(rev) >= {"name", "one", "two", "value", "suppressed", "health"}
+
+    def test_get_bom(self):
+        result = mock_command("get_bom")
+        assert result["motor_count"] == 2
+        assert sum(p["count"] for p in result["parts"]) == result["total_count"]
+        assert all(len(p.get("occurrences", [])) <= 5 for p in result["parts"])
 
     def test_ground_occurrence(self):
         result = mock_command("ground_occurrence", {"occurrence": "Channel:2"})
