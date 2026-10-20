@@ -44,6 +44,17 @@ _JOINT_TYPES = [
     "ball",
 ]
 
+# Joint limits for set_joint_value, in the motion's unit (deg or cm).
+_JOINT_LIMITS = {
+    "type": "object",
+    "properties": {
+        "min": {"type": ["number", "null"]},
+        "max": {"type": ["number", "null"]},
+        "rest": {"type": ["number", "null"]},
+    },
+    "additionalProperties": False,
+}
+
 TOOLS: list[dict] = [
     # ── scene / query ────────────────────────────────────────────────
     {
@@ -1863,6 +1874,65 @@ TOOLS: list[dict] = [
             },
         },
     },
+    {
+        "name": "set_joint_value",
+        "title": "Set Joint Value",
+        "description": (
+            "Drive a joint (or as-built joint) by name. Revolute: value = "
+            "degrees. Slider: value = cm. Cylindrical / pin_slot: value = "
+            "rotation (deg), value2 = slide (cm). limits / limits2 = {min, "
+            "max, rest} for the same motions (a number enables that limit, "
+            "null disables it). By default the value is temporary, like "
+            "dragging the part: good for checking stowed vs extended size or "
+            "interference, but Fusion resets it to 0 on the next recompute "
+            "(any modeling call, or changing limits), and values outside the "
+            "limits are refused (see warnings). "
+            "persist=true writes the joint's angle/offset instead, which "
+            "lasts (not for as-built joints, nor motions off the joint's Z "
+            "axis). Returns the joint's current values, limits, health and "
+            "the moved occurrence's bbox."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["joint"],
+            "properties": {
+                "joint": {
+                    "type": "string",
+                    "description": "Joint name, e.g. 'Revolute 1'",
+                },
+                "value": {
+                    "type": "number",
+                    "description": "Rotation (deg) or, for sliders, slide (cm)",
+                },
+                "value2": {
+                    "type": "number",
+                    "description": "Cylindrical / pin_slot slide (cm)",
+                },
+                "limits": _JOINT_LIMITS,
+                "limits2": _JOINT_LIMITS,
+                "persist": {"type": "boolean", "default": False},
+            },
+        },
+    },
+    {
+        "name": "get_timeline",
+        "title": "Get Timeline",
+        "description": (
+            "List the design timeline: per item i, name, type, suppressed, "
+            "health (healthy|warning|error|...) and message when unhealthy. "
+            "Collapsed groups are one row with 'items' and their unhealthy "
+            "children under 'issues'. 'problems' counts warning/error rows; "
+            "errors_only=true lists just those. Read-only."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "offset": {"type": "integer", "default": 0, "minimum": 0},
+                "limit": {"type": "integer", "default": 100, "minimum": 1},
+                "errors_only": {"type": "boolean", "default": False},
+            },
+        },
+    },
     # ── inspection / analysis ──────────────────────────────────────────
     {
         "name": "measure_distance",
@@ -2647,6 +2717,7 @@ TOOLS: list[dict] = [
 
 _READ_ONLY = {
     "find_holes",
+    "get_timeline",
     "list_faces",
     "get_scene_info",
     "get_object_info",
@@ -2668,6 +2739,7 @@ _READ_ONLY = {
 _DESTRUCTIVE = {"delete_all", "delete_parameter"}
 _IDEMPOTENT = {
     "find_holes",
+    "get_timeline",
     "list_faces",
     "ping",
     "get_scene_info",
@@ -2684,6 +2756,7 @@ _IDEMPOTENT = {
     "set_appearance",
     "set_color",
     "ground_occurrence",
+    "set_joint_value",
     "cam_list_setups",
     "cam_list_operations",
     "cam_get_operation_info",

@@ -46,6 +46,7 @@ _MUTATION_MOCKS: frozenset[str] = frozenset(
         # assembly placement
         "insert_part",
         "move_occurrence",
+        "set_joint_value",
         "thicken_surface",
         "patch_surface",
         "stitch_surfaces",
@@ -494,6 +495,95 @@ def _ground_occurrence(p: dict) -> dict:
         "occurrence": occ,
         "component": occ.split("+")[-1].split(":")[0],
         "grounded": p.get("grounded", True),
+    }
+
+
+_MOCK_JOINT_DOFS = {
+    "Revolute 1": ("revolute", (("rotation", "deg"),)),
+    "Slider 2": ("slider", (("slide", "cm"),)),
+    "Cylindrical 3": ("cylindrical", (("rotation", "deg"), ("slide", "cm"))),
+}
+
+
+def _set_joint_value(p: dict) -> dict:
+    name = p.get("joint", "Revolute 1")
+    jtype, dofs = _MOCK_JOINT_DOFS.get(name, _MOCK_JOINT_DOFS["Revolute 1"])
+    values, limits = {}, {}
+    for (prefix, unit), v, lim in zip(
+        dofs,
+        (p.get("value"), p.get("value2")),
+        (p.get("limits"), p.get("limits2")),
+    ):
+        values[f"{prefix}_{unit}"] = float(v) if v is not None else 0.0
+        if lim:
+            kept = {k: x for k, x in lim.items() if x is not None}
+            if kept:
+                limits[prefix] = kept
+    result = {
+        "joint": name,
+        "type": jtype,
+        "occurrence_one": "Arm:1",
+        "occurrence_two": "Base:1",
+        "values": values,
+        "persisted": bool(p.get("persist", False)),
+        "health": "ok",
+        "moved_bbox": {"min": [1.5, 1.5, 1.0], "max": [7.5, 2.5, 1.5]},
+    }
+    if limits:
+        result["limits"] = limits
+    return result
+
+
+def _get_timeline(p: dict) -> dict:
+    rows = [
+        {
+            "i": 0,
+            "name": "Base:1",
+            "type": "Occurrence",
+            "suppressed": False,
+            "health": "healthy",
+        },
+        {
+            "i": 1,
+            "name": "Sketch1",
+            "type": "Sketch",
+            "suppressed": False,
+            "health": "healthy",
+        },
+        {
+            "i": 2,
+            "name": "Extrude1",
+            "type": "Extrude",
+            "suppressed": False,
+            "health": "warning",
+            "message": "Cannot extend extrusion to object.",
+        },
+        {
+            "i": 3,
+            "name": "Group1",
+            "type": "Group",
+            "suppressed": False,
+            "health": "healthy",
+            "items": 2,
+        },
+        {
+            "i": 4,
+            "name": "Revolute 1",
+            "type": "Joint",
+            "suppressed": False,
+            "health": "healthy",
+        },
+    ]
+    if p.get("errors_only"):
+        rows = [r for r in rows if r["health"] in ("warning", "error")]
+    offset, limit = p.get("offset", 0), p.get("limit", 100)
+    page = rows[offset : offset + limit]
+    return {
+        "count": 5,
+        "marker_position": 5,
+        "problems": 1,
+        "items": page,
+        "truncated": offset + len(page) < len(rows),
     }
 
 
@@ -1204,6 +1294,8 @@ _DISPATCH: dict[str, Any] = {
     "list_faces": _list_faces,
     "insert_part": _insert_part,
     "move_occurrence": _move_occurrence,
+    "set_joint_value": _set_joint_value,
+    "get_timeline": _get_timeline,
     # inspection / analysis
     "measure_distance": _measure_distance,
     "measure_angle": _measure_angle,

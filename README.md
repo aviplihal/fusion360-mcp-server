@@ -182,6 +182,7 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 | `scale_body` | Scale uniformly or non-uniformly |
 | `suppress_feature` | Suppress a timeline feature |
 | `unsuppress_feature` | Re-enable a suppressed feature |
+| `get_timeline` | Timeline items with type, suppressed, health and warning/error messages; errors_only filter |
 
 ### Body Operations
 | Tool | Description |
@@ -237,6 +238,7 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 | `move_occurrence` | Place an occurrence (absolute or relative) |
 | `find_holes` | Holes of an occurrence with refs and start/end points |
 | `list_faces` | Planar/cylindrical faces of an occurrence with refs |
+| `set_joint_value` | Drive a joint (deg / cm) and set its limits; temporary by default, persist=true writes angle/offset |
 
 ### Inspection & Analysis
 | Tool | Description |

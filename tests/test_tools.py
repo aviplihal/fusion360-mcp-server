@@ -146,6 +146,8 @@ def test_expected_tools_present():
         "list_faces",
         "insert_part",
         "move_occurrence",
+        "set_joint_value",
+        "get_timeline",
         # inspection / analysis
         "measure_distance",
         "measure_angle",

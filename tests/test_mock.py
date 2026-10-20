@@ -344,6 +344,48 @@ class TestMockAssembly:
         assert result["component"] == "Channel"
         assert result["grounded"] is True
 
+    def test_set_joint_value_revolute(self):
+        result = mock_command(
+            "set_joint_value",
+            {"joint": "Revolute 1", "value": 90, "limits": {"min": -45, "max": 120}},
+        )
+        assert result["type"] == "revolute"
+        assert result["values"] == {"rotation_deg": 90.0}
+        assert result["limits"] == {"rotation": {"min": -45, "max": 120}}
+        assert result["persisted"] is False
+        assert "moved_bbox" in result
+        assert "deltas" in result  # parts move, so it is a mutation
+
+    def test_set_joint_value_cylindrical_persist(self):
+        result = mock_command(
+            "set_joint_value",
+            {"joint": "Cylindrical 3", "value": 30, "value2": 2, "persist": True},
+        )
+        assert result["values"] == {"rotation_deg": 30.0, "slide_cm": 2.0}
+        assert result["persisted"] is True
+
+    def test_get_timeline(self):
+        result = mock_command("get_timeline")
+        assert result["count"] == 5
+        assert result["marker_position"] == 5
+        assert result["problems"] == 1
+        assert result["items"][0] == {
+            "i": 0,
+            "name": "Base:1",
+            "type": "Occurrence",
+            "suppressed": False,
+            "health": "healthy",
+        }
+        assert "deltas" not in result
+
+    def test_get_timeline_errors_only_and_paging(self):
+        only = mock_command("get_timeline", {"errors_only": True})
+        assert [r["name"] for r in only["items"]] == ["Extrude1"]
+        assert only["items"][0]["message"]
+        paged = mock_command("get_timeline", {"offset": 1, "limit": 2})
+        assert [r["i"] for r in paged["items"]] == [1, 2]
+        assert paged["truncated"] is True
+
     def test_insert_part(self):
         result = mock_command(
             "insert_part",

@@ -66,6 +66,7 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 | `scale_body` | Scale uniformly or non-uniformly |
 | `suppress_feature` | Suppress a timeline feature |
 | `unsuppress_feature` | Re-enable a suppressed feature |
+| `get_timeline` | Timeline items with type, suppressed, health and warning/error messages; errors_only filter |
 
 ### Body Operations
 | Tool | Description |
@@ -119,6 +120,7 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 | `move_occurrence` | Place an occurrence (absolute or relative); may renumber it in parametric designs |
 | `find_holes` | Holes of an occurrence with refs, diameter, start/end points (for add_joint) |
 | `list_faces` | Planar/cylindrical faces of an occurrence with refs, normals, centers |
+| `set_joint_value` | Drive a joint (deg / cm) and set its limits; temporary by default, persist=true writes angle/offset |
 
 ### Inspection & Analysis
 | Tool | Description |
