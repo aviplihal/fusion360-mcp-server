@@ -97,6 +97,8 @@ class TestToolAnnotations:
             "list_faces",
             "list_joints",
             "get_bom",
+            "check_robot_rules",
+            "list_documents",
             "get_scene_info",
             "get_object_info",
             "get_bounding_box",
@@ -126,7 +128,7 @@ class TestToolAnnotations:
     def test_destructive_tools(self):
         from fusion360_mcp.tools import TOOLS
 
-        destructive = {"delete_all", "delete_parameter"}
+        destructive = {"delete_all", "delete_parameter", "close_document"}
         for t in TOOLS:
             ann = t["annotations"]
             if t["name"] in destructive:

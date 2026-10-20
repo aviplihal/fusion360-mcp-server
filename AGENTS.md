@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is an MCP server (103 tools) that connects AI coding agents to Autodesk Fusion 360 for CAD automation. It consists of two pieces:
+This is an MCP server (110 tools) that connects AI coding agents to Autodesk Fusion 360 for CAD automation. It consists of two pieces:
 
 1. **MCP Server** (this repo) — speaks MCP protocol over stdio, forwards commands to Fusion via TCP
 2. **Fusion 360 Add-in** — runs inside Fusion, executes commands on the main thread via CustomEvent bridge
@@ -16,7 +16,7 @@ Claude Code ──stdio──> MCP Server ──TCP :9876──> Fusion Add-in �
 
 The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion API calls to the main thread. Socket threads submit work items and block on a per-item `threading.Event` until the main thread completes execution.
 
-## Available tools (103)
+## Available tools (110)
 
 ### Scene & Query
 | Tool | Description |
@@ -124,6 +124,7 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 | `list_joints` | Joints and as-built joints: type, occurrences, value, limits, health |
 | `get_bom` | Parts grouped by component: count, mass, motor/servo counts, total mass |
 | `set_joint_value` | Drive a joint (deg / cm) and set its limits; temporary by default, persist=true writes angle/offset |
+| `check_robot_rules` | FTC size (R102/R105) and motor/servo (R503) rules for the robot, or one subsystem's envelope, interference and actuator budget |
 
 ### Inspection & Analysis
 | Tool | Description |
@@ -162,6 +163,16 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 | `cam_list_setups` | List all manufacturing setups |
 | `cam_list_operations` | List operations in a setup |
 | `cam_get_operation_info` | Get operation details (strategy, tool, parameters) |
+
+### Documents
+| Tool | Description |
+|------|-------------|
+| `list_documents` | Open documents: name, active, saved, modified |
+| `new_document` | New design document (parametric or direct), made active |
+| `open_document` | Activate an open document, open a cloud design from the active project by name, or a local .f3d |
+| `activate_document` | Switch to an open document |
+| `save_document` | Save to the Fusion cloud (new version, or save-as with name and folder). Confirm with the user first |
+| `close_document` | Close a document; refuses unsaved changes unless save or discard_changes |
 
 ### Code Execution
 | Tool | Description |
@@ -229,6 +240,7 @@ Known `error_kind` values: `PROFILE_NOT_CLOSED`, `SKETCH_NOT_FOUND`, `BODY_NOT_F
 - **Keep execute_code under ~15 lines.** Prefer the dedicated tools over execute_code whenever possible.
 - **Name parts by occurrence.** Copies of one part share a component name (`Channel`) but have unique occurrence names (`Channel:1`, `Channel:2`); `list_components` shows them. Assembly tools accept either, and error with the candidates when a component name is ambiguous.
 - **Bolting parts:** `find_holes` on both parts, then `join_on_holes(occ_a=mover, hole_a, occ_b=fixed, hole_b)`; it picks the side and checks interference. For full control use `add_joint` with `geometry_one` = moving part's hole, `geometry_two` = fixed part's hole. Moving `end` → fixed `start` lands the mover on the fixed hole's start side; `start` → `end` on its end side. The first occurrence moves, so ground the base part first. Check `health` and `check_interference` afterwards.
+- **Check the rules per subsystem.** `check_robot_rules(subsystem=..., envelope=..., budget=...)` after each subsystem, and without `subsystem` for the whole robot. Sizes use the current joint pose, so drive joints to stowed and extended with `set_joint_value` and check both.
 - **Model a part inside its component.** `create_sketch(component="Arm:1")` and the primitives' `component` build there, in the component's own coordinates; extrude/revolve/sweep/loft follow the sketch, and body tools (fillet, shell, create_hole, patterns, …) work in the body's own component and coordinates. Results include `component`.
 - **Units are centimeters.** Fusion's internal API uses cm, not mm.
 - **30-second timeout.** Commands that take longer than 30s will return a timeout error.

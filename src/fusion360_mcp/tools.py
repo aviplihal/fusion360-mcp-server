@@ -1956,6 +1956,138 @@ TOOLS: list[dict] = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "check_robot_rules",
+        "title": "Check Robot Rules",
+        "description": (
+            "FTC size and actuator rules. Without 'subsystem': the whole "
+            "robot against the season's kb/rules constraints (R102 starting "
+            "cube, R105 expansion box with its vertical side on 'up', R503 "
+            "motor/servo limits). With 'subsystem' (an occurrence): its bbox "
+            "inside 'envelope', no interference with other top-level "
+            "components, and motor/servo counts within 'budget'. Sizes use "
+            "the current joint pose: drive joints with set_joint_value to "
+            "check stowed and extended. Returns passed, checks[], size_cm, size_in."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "subsystem": {"type": "string", "description": _OCC_NAME},
+                "envelope": {
+                    "type": "object",
+                    "description": "Allowed box in cm: {min: [x,y,z], max: [x,y,z]}",
+                    "properties": {
+                        "min": {"type": "array", "items": {"type": "number"}},
+                        "max": {"type": "array", "items": {"type": "number"}},
+                    },
+                    "required": ["min", "max"],
+                },
+                "budget": {
+                    "type": "object",
+                    "description": "Max actuators, e.g. {motors: 2, servos: 1}",
+                    "additionalProperties": {"type": "integer"},
+                },
+                "up": {
+                    "type": "string",
+                    "enum": ["x", "y", "z"],
+                    "default": "z",
+                    "description": "Design axis that points up from the field",
+                },
+                "rules": {
+                    "type": "object",
+                    "description": (
+                        "Override constraints.json (same keys: starting_size, "
+                        "expansion_size, actuators)"
+                    ),
+                },
+            },
+        },
+    },
+    {
+        "name": "list_documents",
+        "title": "List Documents",
+        "description": "Open Fusion documents: name, active, saved, modified.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "new_document",
+        "title": "New Document",
+        "description": "Create a new design document and make it active.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "design_type": {
+                    "type": "string",
+                    "enum": ["parametric", "direct"],
+                    "default": "parametric",
+                },
+            },
+        },
+    },
+    {
+        "name": "open_document",
+        "title": "Open Document",
+        "description": (
+            "Open a design and make it active: 'name' activates an open "
+            "document or opens a cloud design from the active project "
+            "(searches 4 folder levels); 'file_path' opens a local .f3d."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "file_path": {"type": "string", "description": "Local .f3d"},
+            },
+        },
+    },
+    {
+        "name": "activate_document",
+        "title": "Activate Document",
+        "description": "Switch to an open document by name (see list_documents).",
+        "inputSchema": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {"name": {"type": "string"}},
+        },
+    },
+    {
+        "name": "save_document",
+        "title": "Save Document",
+        "description": (
+            "Save to the Fusion cloud (outward-facing: creates a version in "
+            "the user's active project — confirm with the user first). A "
+            "saved document gets a new version; an unsaved one needs 'name' "
+            "and optionally 'folder' (\"FTC/2026\", created if missing)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Save-as name"},
+                "folder": {
+                    "type": "string",
+                    "description": "Path under the project root",
+                },
+                "description": {"type": "string", "default": "Saved by MCP"},
+                "document": {"type": "string", "description": "Default: active"},
+            },
+        },
+    },
+    {
+        "name": "close_document",
+        "title": "Close Document",
+        "description": (
+            "Close a document (default: active). Refuses unsaved changes "
+            "unless save=true or discard_changes=true."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "save": {"type": "boolean", "default": False},
+                "discard_changes": {"type": "boolean", "default": False},
+            },
+        },
+    },
+    {
         "name": "move_occurrence",
         "title": "Move Occurrence",
         "description": (
@@ -2837,6 +2969,8 @@ _READ_ONLY = {
     "list_faces",
     "list_joints",
     "get_bom",
+    "check_robot_rules",
+    "list_documents",
     "get_scene_info",
     "get_object_info",
     "get_bounding_box",
@@ -2854,13 +2988,16 @@ _READ_ONLY = {
     "get_design_type",
     "render_view",
 }
-_DESTRUCTIVE = {"delete_all", "delete_parameter"}
+_DESTRUCTIVE = {"delete_all", "delete_parameter", "close_document"}
 _IDEMPOTENT = {
     "find_holes",
     "get_timeline",
     "list_faces",
     "list_joints",
     "get_bom",
+    "check_robot_rules",
+    "list_documents",
+    "activate_document",
     "ping",
     "get_scene_info",
     "get_object_info",

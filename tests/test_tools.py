@@ -149,6 +149,13 @@ def test_expected_tools_present():
         "join_on_holes",
         "list_joints",
         "get_bom",
+        "check_robot_rules",
+        "list_documents",
+        "new_document",
+        "open_document",
+        "activate_document",
+        "save_document",
+        "close_document",
         "set_joint_value",
         "get_timeline",
         # inspection / analysis

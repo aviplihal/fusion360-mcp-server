@@ -1,5 +1,5 @@
 {
-  "_comment": "get_bom counts a component as a class when its part number or name starts with one of these prefixes (case-insensitive). Edit freely; no code change needed.",
+  "_comment": "get_bom and check_robot_rules count a component as a class when its part number or name starts with one of these prefixes (case-insensitive). Fallback: '_names' matches words in the component name, unless an 'exclude' word is also there. Edit freely; no code change needed.",
   "motor": [
     "5202-",
     "5203-",
@@ -11,5 +11,32 @@
   "servo": [
     "2000-0025",
     "REV-41-1097"
-  ]
+  ],
+  "_names": {
+    "motor": [
+      "yellow jacket",
+      "gear motor",
+      "hd hex motor",
+      "core hex motor",
+      "motor"
+    ],
+    "servo": [
+      "servo"
+    ],
+    "exclude": [
+      "mount",
+      "bracket",
+      "hub",
+      "block",
+      "horn",
+      "plate",
+      "spacer",
+      "cable",
+      "extension",
+      "adapter",
+      "coupler",
+      "clamp",
+      "pinion"
+    ]
+  }
 }

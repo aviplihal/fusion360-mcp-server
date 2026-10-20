@@ -27,6 +27,7 @@ from . import hole_geometry as _hole_geom
 from . import joint_values as _joint_vals
 from . import occurrence_refs as _occ_refs
 from . import parameter_units as _param_units
+from . import robot_rules as _rules
 from . import timeline_rows as _tl_rows
 
 log = get_logger("handler")
@@ -201,6 +202,14 @@ class CommandHandler:
                 "join_on_holes": self.join_on_holes,
                 "list_joints": self.list_joints,
                 "get_bom": self.get_bom,
+                "check_robot_rules": self.check_robot_rules,
+                # documents
+                "list_documents": self.list_documents,
+                "new_document": self.new_document,
+                "open_document": self.open_document,
+                "activate_document": self.activate_document,
+                "save_document": self.save_document,
+                "close_document": self.close_document,
                 "set_joint_value": self.set_joint_value,
                 "get_timeline": self.get_timeline,
                 # inspection / analysis
@@ -287,7 +296,12 @@ class CommandHandler:
             result = {"value": result}
         result.setdefault("ok", True)
 
-        if is_mutation and snap_before is not None:
+        # Deltas across a document switch compare two different designs.
+        if (
+            is_mutation
+            and snap_before is not None
+            and not result.get("document_changed")
+        ):
             snap_after = self._snapshot()
             if snap_after is not None:
                 result["deltas"] = self._compute_deltas(snap_before, snap_after)
@@ -3643,6 +3657,115 @@ class CommandHandler:
             **{f"{c}_count": n for c, n in class_counts.items()},
         }
 
+    def _class_counts(self, occs) -> dict:
+        """{"motor": n, "servo": n} over occurrences (each copy counts)."""
+        counts = {}
+        for occ in occs:
+            comp = occ.component
+            cls = _asm.classify_part(comp.partNumber, comp.name)
+            if cls:
+                counts[cls] = counts.get(cls, 0) + 1
+        return counts
+
+    def check_robot_rules(
+        self,
+        subsystem: str = None,
+        envelope: dict = None,
+        budget: dict = None,
+        up: str = "z",
+        rules: dict = None,
+    ):
+        """Size and actuator rules for the whole robot, or one subsystem."""
+        root = self._root()
+        checks = []
+        if subsystem is None:
+            lim = _rules.limits_from(rules or _rules.load_constraints())
+            box = self._bbox_union(self._all_bodies())
+            if box is None:
+                raise RuntimeError("The design has no bodies to check")
+            size = [box[1][i] - box[0][i] for i in range(3)]
+            for name, key, vertical in (
+                ("starting", "starting_box", None),
+                ("expansion", "expansion_box", lim["expansion_vertical"]),
+            ):
+                if lim[key]:
+                    res = _rules.fits_box(size, lim[key], up, vertical)
+                    checks.append(
+                        {
+                            "rule": lim[f"{name}_rule"],
+                            "check": f"fits {name} box {lim[key]} cm",
+                            **res,
+                        }
+                    )
+            counts = self._class_counts(root.allOccurrences)
+            for cls in ("motor", "servo"):
+                limit = lim[f"max_{cls}s"]
+                if limit is not None:
+                    n = counts.get(cls, 0)
+                    checks.append(
+                        {
+                            "rule": lim["actuator_rule"],
+                            "check": f"{cls}s ≤ {limit}",
+                            "ok": n <= limit,
+                            "value": n,
+                        }
+                    )
+            scope = {"scope": "robot", "season": lim["season"]}
+        else:
+            occ = self._occurrence(subsystem)
+            box = self._bbox_union(self._all_bodies(occ))
+            if box is None:
+                raise RuntimeError(f"'{subsystem}' has no bodies to check")
+            size = [box[1][i] - box[0][i] for i in range(3)]
+            if envelope:
+                checks.append(
+                    {"check": "inside envelope", **_rules.envelope_check(box, envelope)}
+                )
+            # Interference only with top-level neighbours whose box touches ours.
+            top = occ
+            while top.assemblyContext is not None:
+                top = top.assemblyContext
+            near = []
+            for other in root.occurrences:
+                if other.fullPathName == top.fullPathName:
+                    continue
+                obox = self._bbox_union(self._all_bodies(other))
+                if obox is not None and _rules.boxes_overlap(box, obox):
+                    near.append(other.fullPathName)
+            hits = []
+            if near:
+                res = self.check_interference([occ.fullPathName, *near])
+                mine = occ.fullPathName
+                for hit in res["interferences"]:
+                    paths = hit["occurrences"]
+                    if any(p.startswith(mine) for p in paths) and any(
+                        not p.startswith(mine) for p in paths
+                    ):
+                        hits.append(
+                            {"occurrences": paths, "volume": round(hit["volume"], 4)}
+                        )
+            checks.append(
+                {
+                    "check": "no interference with other top-level components",
+                    "ok": not hits,
+                    "checked": near,
+                    **({"hits": hits} if hits else {}),
+                }
+            )
+            if budget:
+                counts = self._class_counts([occ, *occ.component.allOccurrences])
+                checks.extend(_rules.count_check(counts, budget))
+            scope = {"scope": "subsystem", **self._occ_info(occ)}
+        return {
+            **scope,
+            # Not "ok": that key is the response envelope's success flag.
+            "passed": all(c["ok"] for c in checks),
+            "checks": checks,
+            "size_cm": [round(s, 2) for s in size],
+            "size_in": [round(s / 2.54, 2) for s in size],
+            "note": "Sizes are for the current joint pose.",
+        }
+
     # ------------------------------------------------------------------
     # Inspection / Analysis
     # ------------------------------------------------------------------
@@ -4573,6 +4696,172 @@ class CommandHandler:
         }
 
     # ------------------------------------------------------------------
+    # Documents
+    # ------------------------------------------------------------------
+
+    def _doc_info(self, doc):
+        return {
+            "name": doc.name,
+            "active": doc == self.app.activeDocument,
+            "saved": doc.isSaved,
+            "modified": doc.isModified,
+        }
+
+    def _document(self, name: str = None):
+        """Open document by name (exact, then case-insensitive); active if None."""
+        if name is None:
+            doc = self.app.activeDocument
+            if doc is None:
+                raise RuntimeError("No active document")
+            return doc
+        docs = list(self.app.documents)
+        for match in (
+            lambda d: d.name == name,
+            lambda d: d.name.lower() == name.lower(),
+        ):
+            hits = [d for d in docs if match(d)]
+            if len(hits) == 1:
+                return hits[0]
+            if len(hits) > 1:
+                raise RuntimeError(
+                    f"'{name}' matches {len(hits)} open documents — save them "
+                    "under distinct names or activate one with the UI"
+                )
+        names = ", ".join(d.name for d in docs[:12])
+        raise RuntimeError(f"Document '{name}' is not open. Open documents: {names}")
+
+    def list_documents(self):
+        docs = [self._doc_info(d) for d in self.app.documents]
+        return {"count": len(docs), "documents": docs}
+
+    def new_document(self, design_type: str = "parametric"):
+        doc = self.app.documents.add(adsk.core.DocumentTypes.FusionDesignDocumentType)
+        design = adsk.fusion.Design.cast(
+            doc.products.itemByProductType("DesignProductType")
+        )
+        design.designType = (
+            adsk.fusion.DesignTypes.DirectDesignType
+            if design_type == "direct"
+            else adsk.fusion.DesignTypes.ParametricDesignType
+        )
+        return {**self._doc_info(doc), "design_type": design_type}
+
+    _CLOUD_SEARCH_DEPTH = 4
+    _CLOUD_SEARCH_FILES = 500
+
+    def _find_cloud_file(self, name: str):
+        """Breadth-first search of the active project for a design by name."""
+        project = self.app.data.activeProject
+        queue, seen, loose = [(project.rootFolder, 0)], 0, None
+        while queue:
+            folder, depth = queue.pop(0)
+            for df in folder.dataFiles:
+                seen += 1
+                if df.name == name:
+                    return df
+                if loose is None and df.name.lower() == name.lower():
+                    loose = df
+                if seen >= self._CLOUD_SEARCH_FILES:
+                    return loose
+            if depth < self._CLOUD_SEARCH_DEPTH:
+                queue.extend((f, depth + 1) for f in folder.dataFolders)
+        return loose
+
+    def open_document(self, name: str = None, file_path: str = None):
+        if bool(name) == bool(file_path):
+            raise RuntimeError("Pass exactly one of 'name' or 'file_path'")
+        if file_path:
+            path = os.path.abspath(os.path.expanduser(file_path))
+            if not path.lower().endswith(".f3d"):
+                raise RuntimeError(
+                    "open_document takes a .f3d file — use insert_part for STEP"
+                )
+            if not os.path.exists(path):
+                raise RuntimeError(f"File not found: {path}")
+            im = self.app.importManager
+            doc = im.importToNewDocument(im.createFusionArchiveImportOptions(path))
+            return {**self._doc_info(doc), "source": "file"}
+        for doc in self.app.documents:
+            if doc.name == name:
+                doc.activate()
+                return {**self._doc_info(doc), "source": "already_open"}
+        df = self._find_cloud_file(name)
+        if df is None:
+            project = self.app.data.activeProject.name
+            raise RuntimeError(
+                f"No design named '{name}' in project '{project}' (searched "
+                f"{self._CLOUD_SEARCH_DEPTH} folder levels)"
+            )
+        doc = self.app.documents.open(df, True)
+        return {**self._doc_info(doc), "source": "cloud"}
+
+    def activate_document(self, name: str):
+        doc = self._document(name)
+        doc.activate()
+        return self._doc_info(doc)
+
+    def _cloud_folder(self, path: str):
+        """Folder under the active project's root from "FTC/2026", created
+        if missing."""
+        folder = self.app.data.activeProject.rootFolder
+        for part in [p for p in (path or "").replace("\\", "/").split("/") if p]:
+            sub = folder.dataFolders.itemByName(part)
+            folder = sub if sub is not None else folder.dataFolders.add(part)
+        return folder
+
+    def save_document(
+        self,
+        name: str = None,
+        folder: str = None,
+        description: str = "Saved by MCP",
+        document: str = None,
+    ):
+        doc = self._document(document)
+        project = self.app.data.activeProject.name
+        if doc.isSaved and not name:
+            if not doc.save(description):
+                raise RuntimeError(f"Saving '{doc.name}' failed")
+            return {**self._doc_info(doc), "project": project, "new_version": True}
+        if not name:
+            raise RuntimeError(
+                f"'{doc.name}' has never been saved — pass 'name' (and "
+                "optionally 'folder')"
+            )
+        target = self._cloud_folder(folder)
+        if not doc.saveAs(name, target, description, ""):
+            raise RuntimeError(f"saveAs '{name}' failed")
+        return {
+            **self._doc_info(doc),
+            "project": project,
+            "folder": folder or "",
+            "new_version": False,
+        }
+
+    def close_document(
+        self, name: str = None, save: bool = False, discard_changes: bool = False
+    ):
+        doc = self._document(name)
+        doc_name = doc.name
+        if save:
+            if not doc.isSaved:
+                raise RuntimeError(
+                    f"'{doc_name}' has never been saved — call save_document "
+                    "with a name first"
+                )
+        elif doc.isModified and not discard_changes:
+            raise RuntimeError(
+                f"'{doc_name}' has unsaved changes — pass save=true or "
+                "discard_changes=true"
+            )
+        doc.close(bool(save))
+        active = self.app.activeDocument
+        return {
+            "closed": doc_name,
+            "saved": bool(save),
+            "active": active.name if active is not None else None,
+        }
+
+    # ------------------------------------------------------------------
     # Health check
     # ------------------------------------------------------------------
 
@@ -4679,9 +4968,14 @@ class CommandHandler:
         output = buf.getvalue()
         result = last_expr_value if last_expr_value is not None else output
 
-        # Warn if design type changed during execution
-        type_after = design.designType
+        # The code may have closed or switched the document (S11): the old
+        # design is then a deleted object and must not be touched.
+        try:
+            document_changed = not design.isValid or self._design() != design
+        except RuntimeError:  # no design is active any more
+            document_changed = True
         design_type_warning = None
+        type_after = type_before if document_changed else design.designType
         if type_before != type_after:
             parametric = adsk.fusion.DesignTypes.ParametricDesignType
             design_type_warning = (
@@ -4700,6 +4994,8 @@ class CommandHandler:
                 result = str(result)
 
         response = {"executed": True, "result": result, "output": output}
+        if document_changed:
+            response["document_changed"] = True
         if design_type_warning:
             response["design_type_warning"] = design_type_warning
         return response

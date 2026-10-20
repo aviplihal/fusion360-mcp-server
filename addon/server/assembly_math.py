@@ -140,18 +140,37 @@ def part_classes() -> dict[str, list[str]]:
         with open(_TABLE_PATH, encoding="utf-8") as f:
             data = json.load(f)
         _table_cache = {k: v for k, v in data.items() if not k.startswith("_")}
-    return _table_cache
+        _table_cache["_names"] = data.get("_names", {})
+    return {k: v for k, v in _table_cache.items() if not k.startswith("_")}
+
+
+def name_rules() -> dict[str, list[str]]:
+    """``{"motor": [words], ..., "exclude": [words]}`` from part_classes.json."""
+    part_classes()
+    return _table_cache["_names"]
 
 
 def classify_part(
-    part_number: str, name: str, table: dict[str, list[str]] | None = None
+    part_number: str,
+    name: str,
+    table: dict[str, list[str]] | None = None,
+    names: dict[str, list[str]] | None = None,
 ) -> str | None:
     """Class ("motor", "servo", ...) whose prefix starts the part number or
-    the component name, case-insensitively; None if no prefix matches."""
+    the component name, case-insensitively. Fallback: a ``names`` word in the
+    component name with no exclude word ("Yellow Jacket", not "Motor Mount").
+    None if nothing matches."""
     table = part_classes() if table is None else table
     keys = [s.strip().upper() for s in (part_number or "", name or "") if s]
     for cls, prefixes in table.items():
         for p in prefixes:
             if any(k.startswith(p.upper()) for k in keys):
                 return cls
+    words = name_rules() if names is None else names
+    low = (name or "").lower()
+    if not low or any(w in low for w in words.get("exclude", [])):
+        return None
+    for cls, needles in words.items():
+        if cls != "exclude" and any(w in low for w in needles):
+            return cls
     return None

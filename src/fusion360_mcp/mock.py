@@ -547,6 +547,88 @@ def _get_bom(_p: dict) -> dict:
     }
 
 
+def _check_robot_rules(p: dict) -> dict:
+    size = [42.0, 40.0, 38.0]
+    sub = p.get("subsystem")
+    if sub:
+        checks = [
+            {
+                "check": "no interference with other top-level components",
+                "ok": True,
+                "checked": [],
+            }
+        ]
+        if p.get("envelope"):
+            checks.insert(0, {"check": "inside envelope", "ok": True, "over_cm": {}})
+        for key, limit in (p.get("budget") or {}).items():
+            checks.append({"check": f"{key} ≤ {limit}", "ok": True, "value": 0})
+        scope = {
+            "scope": "subsystem",
+            "occurrence": _occ_name(sub),
+            "component": sub.split(":")[0],
+        }
+    else:
+        checks = [
+            {"rule": "R102", "check": "fits starting box", "ok": True, "over_cm": 0},
+            {"rule": "R105", "check": "fits expansion box", "ok": True, "over_cm": 0},
+            {"rule": "R503", "check": "motors ≤ 8", "ok": True, "value": 2},
+            {"rule": "R503", "check": "servos ≤ 8", "ok": True, "value": 0},
+        ]
+        scope = {"scope": "robot", "season": "2026-27"}
+    return {
+        **scope,
+        "passed": all(c["ok"] for c in checks),
+        "checks": checks,
+        "size_cm": size,
+        "size_in": [round(v / 2.54, 2) for v in size],
+        "note": "Sizes are for the current joint pose.",
+    }
+
+
+def _doc(name: str, active: bool = True, saved: bool = False) -> dict:
+    return {"name": name, "active": active, "saved": saved, "modified": False}
+
+
+def _list_documents(_p: dict) -> dict:
+    return {
+        "count": 2,
+        "documents": [_doc("Robot", saved=True), _doc("Untitled", active=False)],
+    }
+
+
+def _new_document(p: dict) -> dict:
+    return {**_doc("Untitled"), "design_type": p.get("design_type", "parametric")}
+
+
+def _open_document(p: dict) -> dict:
+    if p.get("file_path"):
+        name = p["file_path"].rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        return {**_doc(name), "source": "file"}
+    return {**_doc(p.get("name") or "Robot", saved=True), "source": "cloud"}
+
+
+def _activate_document(p: dict) -> dict:
+    return _doc(p.get("name") or "Robot", saved=True)
+
+
+def _save_document(p: dict) -> dict:
+    name = p.get("name") or "Robot"
+    return {
+        **_doc(name, saved=True),
+        "project": "Mock Project",
+        **({"folder": p.get("folder") or ""} if p.get("name") else {}),
+        "new_version": not p.get("name"),
+    }
+
+
+def _close_document(p: dict) -> dict:
+    return {
+        "closed": p.get("name") or "Robot",
+        "saved": bool(p.get("save")),
+        "active": "Untitled",
+    }
+
+
 def _insert_part(p: dict) -> dict:
     path = p.get("file_path", "/tmp/part.step")
     stem = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
@@ -1392,6 +1474,13 @@ _DISPATCH: dict[str, Any] = {
     "join_on_holes": _join_on_holes,
     "list_joints": _list_joints,
     "get_bom": _get_bom,
+    "check_robot_rules": _check_robot_rules,
+    "list_documents": _list_documents,
+    "new_document": _new_document,
+    "open_document": _open_document,
+    "activate_document": _activate_document,
+    "save_document": _save_document,
+    "close_document": _close_document,
     "set_joint_value": _set_joint_value,
     "get_timeline": _get_timeline,
     # inspection / analysis

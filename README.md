@@ -123,7 +123,7 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 2. Stop the add-in in Fusion (Shift+S → Add-Ins → Fusion360MCP → Stop)
 3. Delete the add-in folder from Fusion's AddIns directory
 
-## Available Tools (103)
+## Available Tools (110)
 
 > Tools marked **(2026+)** require a recent Fusion build — they use APIs introduced in the January–July 2026 releases and are live-tested on Fusion 2705 (arm64).
 
@@ -242,6 +242,7 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 | `list_joints` | List joints with type, value, limits and health |
 | `get_bom` | Bill of materials with mass and motor/servo counts |
 | `set_joint_value` | Drive a joint (deg / cm) and set its limits; temporary by default, persist=true writes angle/offset |
+| `check_robot_rules` | Check FTC size and motor/servo rules for the robot or one subsystem |
 
 ### Inspection & Analysis
 | Tool | Description |
@@ -287,6 +288,16 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 | `cam_list_setups` | List all manufacturing setups |
 | `cam_list_operations` | List operations in a setup |
 | `cam_get_operation_info` | Get operation details (strategy, tool, parameters) |
+
+### Documents
+| Tool | Description |
+|------|-------------|
+| `list_documents` | Open documents: name, active, saved, modified |
+| `new_document` | New design document (parametric or direct), made active |
+| `open_document` | Activate an open document, open a cloud design from the active project by name, or a local .f3d |
+| `activate_document` | Switch to an open document |
+| `save_document` | Save to the Fusion cloud (new version, or save-as with name and folder). Confirm with the user first |
+| `close_document` | Close a document; refuses unsaved changes unless save or discard_changes |
 
 ### Code Execution
 | Tool | Description |

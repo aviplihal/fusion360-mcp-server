@@ -377,6 +377,44 @@ class TestMockAssembly:
         assert sum(p["count"] for p in result["parts"]) == result["total_count"]
         assert all(len(p.get("occurrences", [])) <= 5 for p in result["parts"])
 
+    def test_check_robot_rules_whole_robot(self):
+        result = mock_command("check_robot_rules")
+        assert result["scope"] == "robot"
+        assert {c["rule"] for c in result["checks"]} == {"R102", "R105", "R503"}
+        assert result["passed"] is True and len(result["size_in"]) == 3
+
+    def test_check_robot_rules_subsystem(self):
+        result = mock_command(
+            "check_robot_rules",
+            {
+                "subsystem": "Intake:1",
+                "envelope": {"min": [0, 0, 0], "max": [40, 20, 30]},
+                "budget": {"motors": 1, "servos": 2},
+            },
+        )
+        assert result["scope"] == "subsystem"
+        assert result["occurrence"] == "Intake:1"
+        checks = [c["check"] for c in result["checks"]]
+        assert checks[0] == "inside envelope"
+        assert "motors ≤ 1" in checks and "servos ≤ 2" in checks
+
+    def test_document_tools(self):
+        docs = mock_command("list_documents")
+        assert docs["count"] == len(docs["documents"])
+        assert set(docs["documents"][0]) == {"name", "active", "saved", "modified"}
+        assert (
+            mock_command("new_document", {"design_type": "direct"})["design_type"]
+            == "direct"
+        )
+        assert (
+            mock_command("open_document", {"file_path": "/x/Arm.f3d"})["name"] == "Arm"
+        )
+        assert mock_command("open_document", {"name": "Robot"})["source"] == "cloud"
+        assert mock_command("activate_document", {"name": "Robot"})["active"] is True
+        saved = mock_command("save_document", {"name": "Bot", "folder": "FTC"})
+        assert saved["folder"] == "FTC" and saved["new_version"] is False
+        assert mock_command("close_document", {"save": True})["saved"] is True
+
     def test_ground_occurrence(self):
         result = mock_command("ground_occurrence", {"occurrence": "Channel:2"})
         assert result["occurrence"] == "Channel:2"

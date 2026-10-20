@@ -1,6 +1,6 @@
 # Status
 
-**Version 1 goal, first-robot test and parallel lanes: [docs/plans/v1.md](docs/plans/v1.md).** **Fusion: Lane A (live tests of #14 documents + #18 check_robot_rules; Lane C paused and agreed). Lane C waits until A releases it.** Onshape calls: Lane C only.
+**Version 1 goal, first-robot test and parallel lanes: [docs/plans/v1.md](docs/plans/v1.md).** **Fusion: free (Lane A released it 2026-10-20 after testing #14 + #18; Lane C may resume).** Onshape calls: Lane C only.
 
 ## Assembly tools (goal: build a full FTC robot without execute_code)
 
@@ -62,10 +62,26 @@ Commit status: committed and pushed on `feat/assembly-tools` (PR #1). Restart th
 
 Commit status: merged and pushed on `feat/assembly-tools` (PR #1). Restart the add-in to run it.
 
+### #14 documents + #18 check_robot_rules (same branch, 2026-10-20)
+
+- **#14:** `list_documents`, `new_document`, `open_document` (open doc / cloud design in the active project / local .f3d), `activate_document`, `save_document` (cloud; the description says to confirm with the user first), `close_document` (refuses unsaved changes unless `save` or `discard_changes`).
+- **S11 fixed:** execute_code returns `document_changed` and skips deltas when the code closed or switched the document.
+- **#18 `check_robot_rules`:**
+  - Whole robot: R102 / R105 / R503, using the latest `kb/rules/<season>/constraints.json`.
+  - One subsystem: inside `envelope`, no interference with top-level neighbours (only those whose bbox overlaps), actuators within `budget`.
+  - The result field is `passed`, not `ok`, because `ok` is the envelope's error flag.
+  - Motor/servo matching falls back to name words in `part_classes.json` (`_names`).
+- **Live-tested:** new doc, rules (robot + subsystem with an envelope overhang and an overlap), list, close refuse/discard, open .f3d, ambiguous-name error, cloud-search miss (6.6 s on the "Shooter" project), unsaved-save error, S11.
+- **Not tested live:**
+  - save_document actually saving (outward-facing)
+  - opening a cloud design that exists
+  - activating by a unique name (every test doc was "Untitled")
+- **Results:** 110 tools, all unit tests pass.
+
 ### Next
-- #14 document handling plus the S11 fix (execute_code fails if user code closes the active document). Test it on its own, since it switches documents.
-- #17 pattern occurrences.
-- #18 `check_robot_rules`, whole robot and one subsystem (requirements in the plan).
+- Merge local `main` (KB work) into this branch. Follow the planning session's steps: untracked kb copies need moving aside first.
+- #17 pattern occurrences (not requested for now).
+- Join `counts_as` from the goBILDA catalog (feat/kb-parts) with `part_classes.json` after the merges.
 - Check `part_classes.json` servo prefixes.
 - `list_joints` may not include a persisted `angle`/`offset`.
 - Test `join_on_holes` on a real goBILDA channel STEP.

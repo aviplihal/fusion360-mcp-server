@@ -134,3 +134,16 @@ class TestClassifyPart:
 
     def test_custom_table(self):
         assert asm.classify_part("X-1", "", {"sensor": ["x-"]}) == "sensor"
+
+    @pytest.mark.parametrize(
+        "name,want",
+        [
+            ("Yellow Jacket Planetary Gear Motor (19.2:1, 3.3-5V Encoder)", "motor"),
+            ("Torque Servo", "servo"),
+            ("Motor Mount (Face)", None),
+            ("Servo Hub (25 Tooth Spline)", None),
+            ("U-Channel", None),
+        ],
+    )
+    def test_name_fallback(self, name, want):
+        assert asm.classify_part("", name) == want
