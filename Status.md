@@ -20,7 +20,7 @@ Live-tested in Fusion on 2026-10-19 (handler reloaded inside execute_code, throw
 - `check_interference` results are temporary bodies with no assembly context, so occurrences are matched by body name + bbox overlap (`occurrences` list per hit).
 - New hint `JOINT_GROUNDED_FIRST`: the first occurrence of a joint is the one that moves.
 
-Still needed: restart the add-in in Fusion so the running code picks up the changes, then commit and open the PR.
+Committed and pushed on `feat/assembly-tools` (add-in restarted and smoke-tested). Still needed: open the PR at https://github.com/aviplihal/fusion360-mcp-server/pull/new/feat/assembly-tools (gh CLI not installed here).
 
 Open item for PR 3: an origin-to-origin rigid joint gets created but doesn't move the part, even after computeAll. Spike 2's hole-face joint did move it. Check this when replacing origin joints with face geometry.
 
