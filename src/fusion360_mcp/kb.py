@@ -15,6 +15,7 @@ Indexed:
 from __future__ import annotations
 
 import csv
+import datetime
 import hashlib
 import json
 import os
@@ -24,7 +25,15 @@ from pathlib import Path
 
 KINDS = ("robot", "mechanism", "idea", "rule", "book")
 # Bump when parsing or the schema changes, so existing indexes rebuild.
-INDEX_VERSION = "3"
+INDEX_VERSION = "4"
+
+# Feedback from the user's verdicts on designs built from an entry
+# (kb/feedback.csv): each like +FEEDBACK_STEP, each dislike -FEEDBACK_STEP,
+# clamped to FEEDBACK_RANGE. Opening an entry alone never changes its rank.
+FEEDBACK_STEP = 0.1
+FEEDBACK_RANGE = (0.7, 1.3)
+FEEDBACK_FIELDS = ["date", "entry", "verdict", "design", "reason"]
+VERDICTS = ("liked", "disliked")
 
 # Words teams use for the same thing. Each group expands to all its members.
 SYNONYMS = [
@@ -81,6 +90,9 @@ CREATE TABLE docs (
     team TEXT,
     multiplier REAL NOT NULL DEFAULT 1.0,
     weight REAL NOT NULL DEFAULT 0,
+    likes INTEGER NOT NULL DEFAULT 0,
+    dislikes INTEGER NOT NULL DEFAULT 0,
+    feedback REAL NOT NULL DEFAULT 1.0,
     ours INTEGER NOT NULL DEFAULT 0,
     parent TEXT,
     path TEXT NOT NULL,
@@ -237,10 +249,15 @@ def _indexed_files(kb_dir: Path) -> list[Path]:
         root = kb_dir / sub
         if root.is_dir():
             files.extend(sorted(root.rglob("*.md")))
-    ideas = kb_dir / "ideas.csv"
-    if ideas.is_file():
-        files.append(ideas)
+    for name in ("ideas.csv", "feedback.csv"):
+        if (kb_dir / name).is_file():
+            files.append(kb_dir / name)
     return files
+
+
+def feedback_multiplier(likes: int, dislikes: int) -> float:
+    low, high = FEEDBACK_RANGE
+    return min(high, max(low, 1 + FEEDBACK_STEP * (likes - dislikes)))
 
 
 def _signature(files: list[Path]) -> str:
@@ -301,8 +318,10 @@ class KnowledgeBase:
         docs: list[dict] = []
         for f in files:
             rel = f.relative_to(self.kb_dir)
-            if f.suffix == ".csv":
+            if f.name == "ideas.csv":
                 docs.extend(_docs_from_ideas(f, rel))
+            elif f.name == "feedback.csv":
+                continue  # applied after the docs exist (_apply_feedback)
             else:
                 doc = _doc_from_markdown(f, rel)
                 if doc:
@@ -313,7 +332,9 @@ class KnowledgeBase:
                 continue
             seen.add(d["id"])
             conn.execute(
-                "INSERT INTO docs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO docs (id, kind, title, type, season, team, multiplier,"
+                " weight, ours, parent, path, meta, body)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     d["id"],
                     d["kind"],
@@ -334,8 +355,28 @@ class KnowledgeBase:
                 "INSERT INTO fts VALUES (?,?,?,?)",
                 (d["id"], d["title"], d["body"], d["tags"]),
             )
+        self._apply_feedback(conn)
         conn.execute("INSERT INTO info VALUES ('signature', ?)", (sig,))
         conn.commit()
+
+    def _apply_feedback(self, conn: sqlite3.Connection) -> None:
+        path = self.kb_dir / "feedback.csv"
+        if not path.is_file():
+            return
+        counts: dict[str, list[int]] = {}
+        with path.open(newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                c = counts.setdefault(row.get("entry") or "", [0, 0])
+                if row.get("verdict") == "liked":
+                    c[0] += 1
+                elif row.get("verdict") == "disliked":
+                    c[1] += 1
+        for entry, (likes, dislikes) in counts.items():
+            conn.execute(
+                "UPDATE docs SET likes = ?, dislikes = ?, feedback = ? "
+                "WHERE id = ? COLLATE NOCASE",
+                (likes, dislikes, feedback_multiplier(likes, dislikes), entry),
+            )
 
     # ── queries ──────────────────────────────────────────────────────
 
@@ -368,7 +409,7 @@ class KnowledgeBase:
 
         season_now = current_season(self.kb_dir) or ""
         boost = (
-            "d.multiplier"
+            "d.multiplier * d.feedback"
             " * (CASE WHEN d.ours THEN 1.2 ELSE 1 END)"
             " * (CASE WHEN ? != '' AND d.season LIKE ? THEN 1.1 ELSE 1 END)"
             " * (1 + 0.15 * ln(1 + d.weight))"
@@ -411,6 +452,44 @@ class KnowledgeBase:
                 )
             ]
         return doc
+
+    def add_feedback(
+        self, entries: list[str], verdict: str, design: str, reason: str
+    ) -> list[str]:
+        """Append one row per entry to kb/feedback.csv; returns canonical ids."""
+        if verdict not in VERDICTS:
+            raise ValueError(f"verdict must be one of {VERDICTS}")
+        if not entries:
+            raise ValueError("Name at least one entry the design was based on.")
+        if not (design or "").strip() or not (reason or "").strip():
+            raise ValueError("Give the design and the reason for the verdict.")
+        conn = self._connect()
+        ids, missing = [], []
+        for entry in entries:
+            row = conn.execute(
+                "SELECT id FROM docs WHERE id = ? COLLATE NOCASE", (entry,)
+            ).fetchone()
+            (ids.append(row[0]) if row else missing.append(entry))
+        if missing:
+            raise ValueError(f"Unknown entries: {', '.join(missing)}")
+        path = self.kb_dir / "feedback.csv"
+        new = not path.is_file()
+        today = datetime.date.today().isoformat()
+        with path.open("a", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=FEEDBACK_FIELDS)
+            if new:
+                w.writeheader()
+            for entry in ids:
+                w.writerow(
+                    {
+                        "date": today,
+                        "entry": entry,
+                        "verdict": verdict,
+                        "design": design.strip(),
+                        "reason": reason.strip(),
+                    }
+                )
+        return ids
 
     def similar_ids(self, doc_id: str, limit: int = 5) -> list[str]:
         conn = self._connect()

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import mcp.types as types
 
-from .kb import KINDS, KnowledgeBase
+from .kb import KINDS, VERDICTS, KnowledgeBase
 
 MECHANISM_TYPES = [
     "drivetrain",
@@ -85,8 +85,45 @@ KB_TOOLS: list[dict] = [
         },
     },
 ]
+KB_TOOLS.append(
+    {
+        "name": "kb_feedback",
+        "title": "Record the user's verdict on a design built from the knowledge base",
+        "description": (
+            "Call this when the user accepts or rejects a part or mechanism you "
+            "designed using knowledge base entries. Pass only the entries that "
+            "caused the verdict: if a shooter is rejected because of a hood idea "
+            "you took from one robot, pass that robot's mechanism (and the idea), "
+            "not everything you opened. Liked entries rank higher in later "
+            "searches, disliked ones lower."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entries": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "description": "Entry ids from kb_search/kb_get",
+                },
+                "verdict": {"type": "string", "enum": list(VERDICTS)},
+                "design": {
+                    "type": "string",
+                    "description": "What you built, e.g. 'BIOBUZZ shooter v1'",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why the user liked or rejected it, in their words",
+                },
+            },
+            "required": ["entries", "verdict", "design", "reason"],
+        },
+    }
+)
 for _t in KB_TOOLS:
     _t["annotations"] = dict(_ANNOTATIONS)
+_WRITE = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}
+KB_TOOLS[-1]["annotations"] = _WRITE
 
 _KB_NAMES = {t["name"] for t in KB_TOOLS}
 _kb: KnowledgeBase | None = None
@@ -175,6 +212,11 @@ def hit_line(d: dict) -> str:
         parts += [kind, d["title"]] + ([f"p.{page}"] if page else [])
     if kind in ("robot", "mechanism") and d["multiplier"] != 1.0:
         parts.append(f"{d['multiplier']:.2f}×")
+    if d.get("likes") or d.get("dislikes"):
+        parts.append(
+            f"used in {d['likes'] + d['dislikes']} designs: "
+            f"{d['likes']} liked, {d['dislikes']} disliked"
+        )
     line = " · ".join(p for p in parts if p)
     if d.get("snip") and kind in ("rule", "book"):
         line += "\n    " + " ".join(d["snip"].split())
@@ -208,6 +250,11 @@ def _meta_lines(d: dict) -> list[str]:
     if isinstance(rating, dict):
         detail = rating.get("detail") or rating.get("basis") or ""
         lines.append(f"rating: {d['multiplier']:.2f}× {detail}".rstrip())
+    if d.get("likes") or d.get("dislikes"):
+        lines.append(
+            f"feedback: {d['feedback']:.2f}× ({d['likes']} liked, "
+            f"{d['dislikes']} disliked)"
+        )
     return lines
 
 
@@ -258,6 +305,14 @@ def call_kb_tool(
                     f" Did you mean: {', '.join(close)}?" if close else ""
                 )
                 return _result(text, error=True)
+        elif name == "kb_feedback":
+            ids = kb.add_feedback(
+                list(args.get("entries") or []),
+                str(args.get("verdict", "")),
+                str(args.get("design", "")),
+                str(args.get("reason", "")),
+            )
+            text = f"Recorded '{args.get('verdict')}' for: {', '.join(ids)}"
         else:
             return _result(f"Unknown knowledge base tool: {name}", error=True)
     except (FileNotFoundError, ValueError) as exc:

@@ -208,12 +208,12 @@ def test_missing_folder_explains_the_env_var(tmp_path):
 
 def test_kb_tools_are_separate_from_fusion_tools():
     names = {t["name"] for t in KB_TOOLS}
-    assert names == {"kb_search", "kb_get"}
+    assert names == {"kb_search", "kb_get", "kb_feedback"}
     assert not names & {t["name"] for t in TOOLS}
     assert all(is_kb_tool(n) for n in names)
     assert not is_kb_tool("extrude")
     for tool in get_kb_tool_list():
-        assert tool.annotations.readOnlyHint is True
+        assert tool.annotations.readOnlyHint is (tool.name != "kb_feedback")
 
 
 def test_kb_search_tool_returns_one_line_per_hit(kb):
@@ -311,3 +311,100 @@ def test_kb_get_shows_team_and_source_compactly(kb):
     text = call_kb_tool("kb_get", {"id": "cb-strong"}, kb).content[0].text
     assert "team: 1234 Test Team" in text
     assert "{'number'" not in text
+
+
+# ── feedback from design verdicts ────────────────────────────────────
+
+
+def _twin_shooters(kb_dir):
+    """Two otherwise identical mechanisms, so only feedback can separate them."""
+    for rid in ("cb-a", "cb-b"):
+        _robot(
+            kb_dir,
+            rid,
+            f"Bot {rid}",
+            1.0,
+            "2025-26 DECODE",
+            {
+                "shooter": (
+                    "shooter",
+                    "Hooded shooter",
+                    {"hood": "adjustable"},
+                    "Hooded shooter.",
+                ),
+            },
+        )
+    return KnowledgeBase(kb_dir)
+
+
+def test_liked_entry_ranks_up_and_disliked_ranks_down(kb_dir):
+    kb = _twin_shooters(kb_dir)
+
+    def order():
+        hits = [h["id"] for h in kb.search("hooded", kind="mechanism")]
+        return [h for h in hits if h in ("cb-a/shooter", "cb-b/shooter")]
+
+    assert order() == ["cb-a/shooter", "cb-b/shooter"]
+    kb.add_feedback(["cb-b/shooter"], "liked", "BIOBUZZ shooter v1", "Hood works")
+    assert order() == ["cb-b/shooter", "cb-a/shooter"]
+    kb.add_feedback(["cb-b/shooter"], "disliked", "BIOBUZZ shooter v2", "Too tall")
+    kb.add_feedback(["cb-b/shooter"], "disliked", "BIOBUZZ shooter v3", "Jams")
+    assert order() == ["cb-a/shooter", "cb-b/shooter"]
+    doc = kb.get("cb-b/shooter")
+    assert (doc["likes"], doc["dislikes"]) == (1, 2)
+    assert doc["feedback"] == pytest.approx(0.9)
+
+
+def test_feedback_multiplier_is_clamped():
+    from fusion360_mcp.kb import feedback_multiplier
+
+    assert feedback_multiplier(0, 0) == 1.0
+    assert feedback_multiplier(10, 0) == 1.3
+    assert feedback_multiplier(0, 10) == 0.7
+
+
+def test_feedback_is_written_to_csv_with_canonical_ids(kb, kb_dir):
+    ids = kb.add_feedback(["CB-STRONG/SHOOTER", "i1"], "liked", "Shooter", "Fast")
+    assert ids == ["cb-strong/shooter", "i1"]
+    rows = (kb_dir / "feedback.csv").read_text().splitlines()
+    assert rows[0] == "date,entry,verdict,design,reason"
+    assert rows[1].endswith(",cb-strong/shooter,liked,Shooter,Fast")
+    assert len(rows) == 3
+
+
+def test_feedback_rejects_bad_input(kb):
+    with pytest.raises(ValueError, match="Unknown entries: nope"):
+        kb.add_feedback(["nope"], "liked", "Shooter", "Fast")
+    with pytest.raises(ValueError, match="verdict"):
+        kb.add_feedback(["i1"], "meh", "Shooter", "Fast")
+    with pytest.raises(ValueError, match="at least one"):
+        kb.add_feedback([], "liked", "Shooter", "Fast")
+    with pytest.raises(ValueError, match="reason"):
+        kb.add_feedback(["i1"], "liked", "Shooter", " ")
+
+
+def test_kb_feedback_tool_and_hit_line(kb):
+    result = call_kb_tool(
+        "kb_feedback",
+        {
+            "entries": ["cb-weak/shooter"],
+            "verdict": "disliked",
+            "design": "BIOBUZZ shooter v1",
+            "reason": "Fixed hood couldn't reach",
+        },
+        kb,
+    )
+    assert not result.isError
+    assert "cb-weak/shooter" in result.content[0].text
+    text = (
+        call_kb_tool("kb_search", {"kind": "mechanism", "type": "shooter"}, kb)
+        .content[0]
+        .text
+    )
+    assert "used in 1 designs: 0 liked, 1 disliked" in text
+    err = call_kb_tool(
+        "kb_feedback",
+        {"entries": ["x"], "verdict": "liked", "design": "d", "reason": "r"},
+        kb,
+    )
+    assert err.isError

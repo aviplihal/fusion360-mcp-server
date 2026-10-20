@@ -49,4 +49,4 @@ uv run ruff check  # lint
 - `ping` is the health check — it never touches the Fusion API
 - Every tool has annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`)
 - Every tool has a mock handler so `--mode mock` works without Fusion running
-- Exception: the knowledge base tools (`kb_search`, `kb_get`) are defined in `kb_tools.py`, not `tools.py`, and run inside the server (`kb.py` indexes `kb/` into SQLite FTS5). They are not forwarded to Fusion and need no mock. Tests: `tests/test_kb.py`
+- Exception: the knowledge base tools (`kb_search`, `kb_get`, `kb_feedback`) are defined in `kb_tools.py`, not `tools.py`, and run inside the server (`kb.py` indexes `kb/` into SQLite FTS5). They are not forwarded to Fusion and need no mock. Tests: `tests/test_kb.py`
