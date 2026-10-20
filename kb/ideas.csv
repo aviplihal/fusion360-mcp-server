@@ -1,0 +1,33 @@
+id,mechanism,text,tags,seen_in,source
+i-123d4afa,drivetrain,"Mount drive motors inboard and belt-drive each mecanum wheel, so the wheel pods stay narrow and protected.",,cb-3c64272b9f6ee02d003cadb8,robots
+i-1333f5bc,drivetrain,Single-stage 9t pinion to 108t gear gives 12:1 on bare 6000 rpm motors with no gearbox.,,cb-374cd425e3bf5a9555f301d2;cb-88715d86e064c7229dffea91,robots
+i-9bc4989a,drivetrain,"Mount drive motors in pairs on one plate per side, so each half of the drivetrain comes out as a module.",,cb-4dd01dd6042d4fc462d78595,robots
+i-a6cfedd4,drivetrain,"Steer coaxial swerve modules with Axon Mini servos on belts, so steering uses no motor ports.",,cb-c021b03986672773c2100272,robots
+i-ce1aec38,drivetrain,Add polycarbonate outer plates over exposed drive gears to keep game pieces and fingers out.,,cb-88715d86e064c7229dffea91,robots
+i-d052abab,drivetrain,"Lay drive motors flat and turn them through miter gears into belts, freeing the space between the side plates.",,cb-739cbc37d8c0f0ad7b95c0eb,robots
+i-216a60d8,intake,Use a 6000 rpm motor directly on the intake for a fast pickup without a gearbox.,,cb-02776f9cf6799ddf7b5ab70c,robots
+i-3fba6b67,intake,A servo-tilted ramp between intake and turret lets the robot hold balls or feed them on demand.,,cb-c021b03986672773c2100272,robots
+i-4697c385,intake,Turn a compliant wheel at each front corner through bevel gears so balls are pulled in from the sides too.,,cb-4dd01dd6042d4fc462d78595,robots
+i-6176dbbe,intake,Intakes at the front and back on separate motors let the robot collect while driving either way.,,cb-739cbc37d8c0f0ad7b95c0eb,robots
+i-699789a0,intake,"Split the intake into a front compliant-wheel stage and a separately powered middle stage, so balls keep moving into storage.",,cb-c9732b32d607504aef03ea69,robots
+i-69e1b550,intake,Turn intake power 90° with a 2:1 bevel set so the motor lies along the side and the roller spans the full width.,,cb-739cbc37d8c0f0ad7b95c0eb,robots
+i-ec11e896,intake,Ten compliant wheels on one long shaft make a cheap full-width intake for 7 cm balls.,,cb-374cd425e3bf5a9555f301d2;cb-4dd01dd6042d4fc462d78595,robots
+i-12c07235,shooter,Add a separate flywheel mass on the shooter shaft so wheel speed drops less between shots.,,cb-374cd425e3bf5a9555f301d2;cb-3c64272b9f6ee02d003cadb8;cb-4dd01dd6042d4fc462d78595;cb-739cbc37d8c0f0ad7b95c0eb,robots
+i-52cd0e75,shooter,Drive one flywheel shaft with two motors through 1:1 belts for faster spin-up and recovery.,,cb-02776f9cf6799ddf7b5ab70c;cb-3c64272b9f6ee02d003cadb8;cb-739cbc37d8c0f0ad7b95c0eb;cb-c021b03986672773c2100272;cb-c9732b32d607504aef03ea69,robots
+i-59d2d0e7,shooter,Belt the counter roller off the flywheel shaft with double pulleys so their speeds stay locked together.,,cb-739cbc37d8c0f0ad7b95c0eb,robots
+i-5fead781,shooter,"Power the flywheel and the counter roller from one motor through belts, saving a motor for other mechanisms.",,cb-374cd425e3bf5a9555f301d2,robots
+i-c55e4bfc,shooter,Line the counter roller with surgical tubing so it grips the ball without a separate wheel.,,cb-4dd01dd6042d4fc462d78595,robots
+i-e85480e4,shooter,Move the hood with a servo through a gear sector so the shot angle can change with distance.,,cb-c021b03986672773c2100272,robots
+i-16a4c3e0,transfer,Give each storage slot its own servo kicker so balls can be fired in any color order.,,cb-02776f9cf6799ddf7b5ab70c;cb-3c64272b9f6ee02d003cadb8,robots
+i-489f06d6,transfer,Laser distance sensors in storage count balls without depending on color.,,cb-739cbc37d8c0f0ad7b95c0eb,robots
+i-75ed8769,transfer,Put color sensors at the ramp to count or sort pieces before the shooter.,,cb-374cd425e3bf5a9555f301d2,robots
+i-a66d76d6,transfer,Pair two color sensors per storage slot so artifact color reads reliably wherever the ball sits.,,cb-3c64272b9f6ee02d003cadb8,robots
+i-c1a86b31,transfer,Put color sensors along the storage ramp so the robot knows the order of stored artifacts.,,cb-02776f9cf6799ddf7b5ab70c,robots
+i-fca7d7de,transfer,Surgical-tubing rollers along an inclined ramp carry balls from the intake up to the turret.,,cb-374cd425e3bf5a9555f301d2,robots
+i-115201ad,turret,Turn the turret on a large ring gear (205T driven by 60T) for fine aiming resolution from a small actuator.,,cb-c9732b32d607504aef03ea69,robots
+i-25233dc2,turret,Build the turret frame from carbon-fiber tubes and printed mounts to keep weight off the turret bearing.,,cb-c021b03986672773c2100272,robots
+i-69a8f627,turret,Route turret wires through a drag-chain ring (inner and outer wiring guides) so the turret turns without a slip ring.,,cb-739cbc37d8c0f0ad7b95c0eb,robots
+i-aeb65b62,turret,Use a thin-section ring bearing (Kaydon KA060XP0) for the turret; it is flat and leaves the middle open for balls.,,cb-739cbc37d8c0f0ad7b95c0eb,robots
+i-c640e20f,turret,Mount the Limelight on the turret so the camera turns with the shooter and stays on the goal.,,cb-4dd01dd6042d4fc462d78595,robots
+i-ed40334e,turret,"Gang three servos onto one turret ring gear for a fast, strong turret without using a motor port.",,cb-739cbc37d8c0f0ad7b95c0eb,robots
+i-f15e0e00,turret,Drive the turret with two servos and read position from an absolute encoder instead of using a motor slot.,,cb-374cd425e3bf5a9555f301d2;cb-c021b03986672773c2100272,robots

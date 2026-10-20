@@ -184,6 +184,24 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 |------|-------------|
 | `render_view` | Capture the active viewport as a PNG. Pass `view=iso\|front\|top\|...` to reposition the camera first. Returns an image content block you can visually inspect to validate geometry before committing to more operations. |
 
+## Knowledge base tools (6)
+
+These run inside the MCP server and work without Fusion. They search the `kb/` folder (set `FUSION_MCP_KB_DIR` if the server isn't run from the repo): past FTC robots and their mechanisms, reusable design ideas, the current game manual's rules, and reference books. The SQLite index (`kb/.index.sqlite`) rebuilds itself whenever a file in `kb/` changes.
+
+| Tool | Description |
+|------|-------------|
+| `kb_search` | One line per hit, best first. Filters: `kind` (robot, mechanism, idea, rule, book), `type` (mechanism type), `season`, exact `facets`. Robots from stronger teams (FTC Scout rating) rank higher |
+| `kb_get` | Open one entry by id: a robot with its mechanisms, a mechanism card, an idea, a rule (`R105`) or a book section |
+| `kb_feedback` | Record the user's verdict (`liked`/`disliked`) on a design built from KB entries, with the reason. Writes `kb/feedback.csv`; each like is +0.1, each dislike −0.1 on that entry's rank (0.7–1.3×) |
+| `kb_find_part` | Find goBILDA parts in `kb/parts/parts.csv`. Exact filters: `sku`, `type`, `series`, `counts_as` (motor/servo/none, for the 8+8 rule), `length_mm` (+ optional `length_tol_mm`). `name` takes free text or a part name from another team's CAD (`Sonic Hub - 8mm REX (GB)`, `… 5203-2402-0019`): a SKU in the name wins, otherwise every number in it must match exactly. `download: true` fetches the single match's STEP file into `~/.fusion-mcp/step-cache/<sku>.step` (once) and returns the path for `insert_part` |
+
+| `robot_design` | The robot design file `kb/designs/<robot>/design.md`: frame (origin at the footprint centre on the tiles, +x right, +y front, +z up, cm) and per subsystem its envelope, interfaces, motor/servo budget, status, KB entries and Fusion component. Actions: `get`, `create` (from `kb/designs/_template/design.md`), `update_subsystem` (refused if motors or servos total > 8 or a stowed envelope leaves the 45.7 cm start cube; moving parts get an `extended` box checked against R105), `add_note` (open question, or `section: log`), `resolve_note` |
+| `kb_save_design` | Saves an **accepted** subsystem as our own mechanism card `kb/robots/ours-<robot>/<subsystem>.md` (+ `robot.md`, `source: ours`, ranked 1.2× in search). Facets must come from the type's list; `notable` ≤ 80 words; brief/decisions/results ≤ 100 words each |
+
+Search before designing a mechanism, and use `kind: "rule"` to check a rule. When the user accepts or rejects a part you based on KB entries, call `kb_feedback` with only the entries that caused the verdict. Before modeling a COTS part, find it with `kb_find_part` and insert its STEP file instead.
+
+**Session knowledge.** Resources `kb://design-rules` (`kb/design_rules.md`: tolerances for FDM, laser wood, laser aluminum, fasteners), `kb://lessons` (`kb/lessons.md`, ≤ 150 lines) and `kb://constraints` (the current season's `constraints.json`). The prompt `work_on_subsystem(robot, subsystem)` gives the 8-step subsystem loop (load, brief, research, concepts, build, checks S1–S4, verdict, save) with the design file, constraints, design rules and lessons inlined; `build_whole_robot(robot)` runs that loop for every unfinished subsystem (drivetrain first), then the robot checks P1–P5.
+
 ## Response shape
 
 Every tool call returns a dict-shaped result with these conventions — read them instead of guessing whether an operation worked:
